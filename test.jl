@@ -103,3 +103,5 @@ end
 map(i -> mean(θ[2][i,:]),1:4)
 
 #####################################################################
+
+# One bug I am having is that the vector `ph` tends to 0, in which `ph` represents the estimated marginal likelihood p_{θ}(y_{1:T}). This is likely due to the normalizing constants also tending to 0, a bug present in the `bootstrapFilter()` function; when calculating the weights Julia only evaluates the log likelihoods, thus I have to convert the weight when calculating the normalizing constant. It isn't clear to me how to find the log normalizing constant, so the problem remains...

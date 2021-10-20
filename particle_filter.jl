@@ -140,8 +140,8 @@ model = NDLM(1.0,1.0,1.0,1.0)
 x,y = simulate(100,model)
 ```
 ```julia-repl
-> kalmanFilter(y,0.0,1.0,1,1,1.0,1.0)
-100×3 Matrix{Float64}:
+> kalmanFilter(y,model)
+100×3 Array{Float64,2}:
   -0.47693    0.00000    0.47694
   -0.41495    0.09382    0.60258
   -1.17056   -0.65821   -0.14586
