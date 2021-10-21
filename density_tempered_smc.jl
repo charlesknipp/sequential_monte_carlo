@@ -27,20 +27,23 @@ will never exceed the threshold, thus removing the need to rejuvinate
 since ESS < B for all iterations.
 """
 function binarySearch(threshold,ph,Sh1,ε)
-    εh = 1.0
+    εh  = 1.0
+    Sh2 = 0.0
 
     # the idea here is to cut ε in half until ESS ≈ B
     while true
-        sh = ph.^(εh-ε)
+        # see equation (8) from Duan & Fulop and note ph is log valued
+        sh = (εh-ε)*ph
 
-        Sh2 = Sh1.*sh
-        Sh2 = Sh2/(Sh1'*sh)
+        Sh2 = Sh1.+sh
+        Sh2 = exp.(Sh2.-maximum(Sh2))
+        Sh2 = Sh2/sum(Sh2)
 
         # if ESS ≈ B break, else ε = .5*ε
         ESS(Sh2)-threshold < 1.0 ? εh *= .5 : break
     end
 
-    return εh,Sh2
+    return εh,log.(Sh2)
 end
 
 
@@ -127,12 +130,12 @@ function densityTemperedSMC(N::Int64,M::Int64,P::Int64,y::Vector{Float64},θ₀:
     for i in 1:N
         θi = θ[1][:,i]
 
-        # set random movements as ph = normalizing constant
+        # see equation (4) from Duan & Fulop and recall ph is log valued
         mod_i = NDLM(θi[1],θi[2],θi[3],θi[4])
-        ph[1][i] = prod(bootstrapFilter(M,y,mod_i)[1])
+        ph[1][i] = sum(bootstrapFilter(M,y,mod_i)[1])
 
         # weights evenly for l=1
-        S[1][i] = 1/N
+        S[1][i] = -log(N)
     end
 
     # store standard deviation & mean of θ[1] for initialization
@@ -148,7 +151,7 @@ function densityTemperedSMC(N::Int64,M::Int64,P::Int64,y::Vector{Float64},θ₀:
 
         # perform a binary search to find ε s.t. ESS ≈ N/2
         ε[l],S[l] = binarySearch(N/2,ph[l-1],S[l-1],ε[l-1])
-        θ[l] = hcat([wsample(θ[l-1][i,:],S[l],N) for i in 1:k]...)'
+        θ[l] = hcat([wsample(θ[l-1][i,:],exp.(S[l]),N) for i in 1:k]...)'
         
         mθ[1] = mθ[2]
         σθ[1] = σθ[2]
@@ -162,11 +165,11 @@ function densityTemperedSMC(N::Int64,M::Int64,P::Int64,y::Vector{Float64},θ₀:
 
             # TODO: make ph log valued and find ph = sum of bf[1]
             mod_i = NDLM(θi[1],θi[2],θi[3],θi[4])
-            ph[l][i] = prod(bootstrapFilter(M,y,mod_i)[1])
+            ph[l][i] = sum(bootstrapFilter(M,y,mod_i)[1])
 
             # MH step (not encased in function since it's iterated)
-            γ = ε[l]*log(ph[l][i])+logpdfPrior(θ[l][:,i],θ₀)
-            γ = γ-(ε[l]*log(ph[l-1][i])+logpdfPrior(θ[l-1][:,i],θ₀))
+            γ = ε[l]*ph[l][i]+logpdfPrior(θ[l][:,i],θ₀)
+            γ = γ-(ε[l]*ph[l-1][i]+logpdfPrior(θ[l-1][:,i],θ₀))
 
             h = logpdfPrior(θ[l-1][:,i],mθ[2],σθ[2])
             h = h-logpdfPrior(θ[l][:,i],mθ[1],σθ[1])

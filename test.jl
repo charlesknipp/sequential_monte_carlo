@@ -23,6 +23,84 @@ map(i -> mean(θ[length(θ)][i,:]),1:4)
 
 ########################## TESTING BLOCK 2 ##########################
 
+function bootstrapFilter(n::Int64,y::Vector{Float64},model::NDLM)
+    T = length(y)
+
+    xs = zeros(Float64,T,n)
+    qs = zeros(Float64,T,3)
+    Z  = zeros(Float64,T)
+
+    x = rand(Normal(model.x0,sqrt(model.Σ0)),n)
+
+    for t in 1:T
+        # propogate forward in time
+        x = (model.A)*x + rand(Normal(0,sqrt(model.Q)),n)
+        
+        # calculate likelihood that y fits the simulated distribution
+        d  = Normal.((model.B)*x,sqrt(model.R))
+        wt = logpdf.(d,y[t])
+
+        # normalize weights and resample
+        w = exp.(wt.-maximum(wt))
+        w = w/sum(w)
+        κ = wsample(1:n,w,n)
+        x = x[κ]
+
+        # store the normalizing constant and sample
+        Z[t] = mean(wt.-maximum(wt))
+        xs[t,:] = x
+        qs[t,:] = quantile(x,[.25,.50,.75])
+    end
+
+    return Z,xs,qs
+end
+
+
+function binarySearch(threshold,ph,Sh1,ε)
+    εh  = 1.0
+    Sh2 = 0.0
+
+    # the idea here is to cut ε in half until ESS ≈ B
+    while true
+        # see equation (8) from Duan & Fulop and note ph is log valued
+        sh = (εh-ε)*ph
+
+        Sh2 = Sh1.+sh
+        Sh2 = exp.(Sh2.-maximum(Sh2))
+        Sh2 = Sh2/sum(Sh2)
+
+        # if ESS ≈ B break, else ε = .5*ε
+        ESS(Sh2)-threshold < 1.0 ? εh *= .5 : break
+    end
+
+    return εh,log.(Sh2)
+end
+
+# previous iteration of binary search
+function binarySearch(threshold,ph,Sh1,ε)
+    εh  = 1.0
+    Sh2 = 0.0
+
+    ph = exp.(ph)
+    Sh1 = exp.(Sh1)
+
+    # the idea here is to cut ε in half until ESS ≈ B
+    while true
+        # see equation (8) from Duan & Fulop
+        sh = ph.^(εh-ε)
+
+        Sh2 = Sh1.*sh
+        Sh2 = Sh2/(Sh1'*sh)
+
+        # println(Sh2)
+
+        # if ESS ≈ B break, else ε = .5*ε
+        ESS(Sh2)-threshold < 1.0 ? εh *= .5 : break
+    end
+
+    return εh,log(Sh2)
+end
+
 # recall: set A = .8 instead of an edge case
 sims = NDLM(0.8,1.0,1.0,1.0)
 _,y = simulate(200,sims)
@@ -54,7 +132,7 @@ for i in 1:N
     ph[1][i] = sum(bootstrapFilter(M,y,mod_i)[1])
 
     # weights evenly for l=1
-    S[1][i] = 1/N
+    S[1][i] = -log(N)
 end
 
 # store standard deviation & mean of θ[1] for initialization
@@ -64,10 +142,10 @@ mθ = [0,map(i -> mean(θ[1][i,:]),1:k)]
 # @distributed to run in parallel (is not currently efficient)
 
 # perform a binary search to find ε s.t. ESS ≈ N/2
-l=2
+l=3
 
-ε[l],S[l] = binarySearch(N/2,exp.(ph[l-1]),S[l-1],ε[l-1])
-θ[l] = hcat([wsample(θ[l-1][i,:],S[l],N) for i in 1:k]...)'
+ε[l],S[l] = binarySearch(N/2,ph[l-1],S[l-1],ε[l-1])
+θ[l] = hcat([wsample(θ[l-1][i,:],exp.(S[l]),N) for i in 1:k]...)'
     
 mθ[1] = mθ[2]
 σθ[1] = σθ[2]
@@ -81,11 +159,11 @@ for i in 1:N
 
     # TODO: make ph log valued and find ph = sum of bf[1]
     mod_i = NDLM(θi[1],θi[2],θi[3],θi[4])
-    ph[l][i] = prod(bootstrapFilter(M,y,mod_i)[1])
+    ph[l][i] = sum(bootstrapFilter(M,y,mod_i)[1])
 
     # MH step (not encased in function since it's iterated)
-    γ = ε[l]*log(ph[l][i])+logpdfPrior(θ[l][:,i],θ₀)
-    γ = γ-(ε[l]*log(ph[l-1][i])+logpdfPrior(θ[l-1][:,i],θ₀))
+    γ = ε[l]*ph[l][i]+logpdfPrior(θ[l][:,i],θ₀)
+    γ = γ-(ε[l]*ph[l-1][i]+logpdfPrior(θ[l-1][:,i],θ₀))
 
     h = logpdfPrior(θ[l-1][:,i],mθ[2],σθ[2])
     h = h-logpdfPrior(θ[l][:,i],mθ[1],σθ[1])

@@ -52,7 +52,7 @@ function bootstrapFilter(n::Int64,y::Vector{Float64},model::NDLM)
         x = x[κ]
 
         # store the normalizing constant and sample
-        Z[t] = mean(exp.(wt))
+        Z[t] = mean(wt.-maximum(wt))
         xs[t,:] = x
         qs[t,:] = quantile(x,[.25,.50,.75])
     end
@@ -116,7 +116,7 @@ function auxiliaryParticleFilter(n::Int64,y::Vector{Float64},model::NDLM)
         x = wsample(x1,w2,n)
 
         # store the normalizing constant and sample
-        Z[t] = mean(exp.(w2))
+        Z[t] = mean(w2.-maximum(w2))
         xs[t,:] = x
         qs[t,:] = quantile(x,[.25,.50,.75])
     end
