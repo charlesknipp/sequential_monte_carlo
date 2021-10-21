@@ -56,49 +56,71 @@ function bootstrapFilter(n::Int64,y::Vector{Float64},model::NDLM)
 end
 
 
-function binarySearch(threshold,ph,Sh1,ε)
-    εh  = 1.0
-    Sh2 = 0.0
+function binarySearch(B,ph,S1,ξ)
+    ξh = 1.0
+    S2 = 0.0
 
-    # the idea here is to cut ε in half until ESS ≈ B
+    # the idea here is to cut ξ in half until ESS ≈ B
     while true
         # see equation (8) from Duan & Fulop and note ph is log valued
-        sh = (εh-ε)*ph
+        sh = (ξh-ξ)*ph
 
-        Sh2 = Sh1.+sh
-        Sh2 = exp.(Sh2.-maximum(Sh2))
-        Sh2 = Sh2/sum(Sh2)
+        Sh = S1.+sh
+        Sh = exp.(Sh.-maximum(Sh))
+        S2 = Sh/sum(Sh)
 
-        # if ESS ≈ B break, else ε = .5*ε
-        ESS(Sh2)-threshold < 1.0 ? εh *= .5 : break
+        # if ESS ≈ B break, else ξ = .5*ξ
+        ESS(S2)-B < 1.0 ? ξh *= .5 : break
     end
 
-    return εh,log.(Sh2)
+    return ξh,log.(S2)
 end
 
 # previous iteration of binary search
-function binarySearch(threshold,ph,Sh1,ε)
-    εh  = 1.0
-    Sh2 = 0.0
+function binarySearch(B,ph,S1,ξ)
+    ξh  = 1.0
+    S2 = 0.0
 
     ph = exp.(ph)
-    Sh1 = exp.(Sh1)
+    S1 = exp.(S1)
 
-    # the idea here is to cut ε in half until ESS ≈ B
+    # the idea here is to cut ξ in half until ESS ≈ B
     while true
         # see equation (8) from Duan & Fulop
-        sh = ph.^(εh-ε)
+        sh = ph.^(ξh-ξ)
 
-        Sh2 = Sh1.*sh
-        Sh2 = Sh2/(Sh1'*sh)
+        Sh = S1.*sh
+        S2 = Sh/(Sh'*sh)
 
-        # println(Sh2)
-
-        # if ESS ≈ B break, else ε = .5*ε
-        ESS(Sh2)-threshold < 1.0 ? εh *= .5 : break
+        # if ESS ≈ B break, else ξ = .5*ξ
+        ESS(S2)-B < 1.0 ? ξh *= .5 : break
     end
 
-    return εh,log(Sh2)
+    return ξh,log.(Sh2)
+end
+
+
+function gridSearch(B,ph,S1,ξ)
+    ξh  = Vector(0.0:0.001:1.0)
+    nξ  = length(ξh)
+    S2 = zeros(Float64,nξ,length(S1))
+
+    search_space = zeros(Float64,nξ)
+
+    for i in 1:nξ
+        # see equation (8)
+        sh = (ξh[i]-ξ)*ph
+
+        Sh = S1.+sh
+        Sh = exp.(Sh.-maximum(Sh))
+        S2[i,:] = Sh/sum(Sh)
+
+        search_space[i] = abs(ESS(S2[i,:])-B)
+    end
+    
+    _,idx = findmin(search_space)
+
+    return ξh[idx],S2[idx,:]
 end
 
 # recall: set A = .8 instead of an edge case
@@ -115,7 +137,7 @@ k = length(θ₀)
 # initialize sequences (eventually replace 4 with length(priors))
 θ  = [zeros(Float64,k,N) for _ in 1:P]
 ph,S = ([zeros(Float64,N) for _ in 1:P] for _ in 1:4)
-ε = zeros(Float64,P)
+ξ = zeros(Float64,P)
 
 # pick an initial guess for θ, and make sure Q,R > 0
 θ[1][1,:] = rand(TruncatedNormal(θ₀[1],1,-1,1),N)
@@ -144,8 +166,10 @@ mθ = [0,map(i -> mean(θ[1][i,:]),1:k)]
 # perform a binary search to find ε s.t. ESS ≈ N/2
 l=3
 
-ε[l],S[l] = binarySearch(N/2,ph[l-1],S[l-1],ε[l-1])
+ξ[l],S[l] = gridSearch(N/2,ph[l-1],S[l-1],ξ[l-1])
 θ[l] = hcat([wsample(θ[l-1][i,:],exp.(S[l]),N) for i in 1:k]...)'
+
+if ESS(exp.(S[l])) < N/2; S[l] = [-log(N) for _ in 1:N] end
     
 mθ[1] = mθ[2]
 σθ[1] = σθ[2]
@@ -162,8 +186,8 @@ for i in 1:N
     ph[l][i] = sum(bootstrapFilter(M,y,mod_i)[1])
 
     # MH step (not encased in function since it's iterated)
-    γ = ε[l]*ph[l][i]+logpdfPrior(θ[l][:,i],θ₀)
-    γ = γ-(ε[l]*ph[l-1][i]+logpdfPrior(θ[l-1][:,i],θ₀))
+    γ = ξ[l]*ph[l][i]+logpdfPrior(θ[l][:,i],θ₀)
+    γ = γ-(ξ[l]*ph[l-1][i]+logpdfPrior(θ[l-1][:,i],θ₀))
 
     h = logpdfPrior(θ[l-1][:,i],mθ[2],σθ[2])
     h = h-logpdfPrior(θ[l][:,i],mθ[1],σθ[1])

@@ -19,31 +19,63 @@ end
 
 
 """
-    binarySearch(threshold,ph[l-1],S[l-1],ε[l-1])
+    binarySearch(B,ph[l-1],S[l-1],ξ[l-1])
 
-Searches the unit interval for the optimal step size `ε` by way of a 
-bisection method as opposed to a grid search. This implies that ESS
-will never exceed the threshold, thus removing the need to rejuvinate
-since ESS < B for all iterations.
+Searches the unit interval for the optimal step size `ξ` by way of a 
+bisection method as opposed to a grid search.
 """
-function binarySearch(threshold,ph,Sh1,ε)
-    εh  = 1.0
-    Sh2 = 0.0
+function binarySearch(B,ph,S1,ξ)
+    ξh = 1.0
+    S2 = 0.0
 
-    # the idea here is to cut ε in half until ESS ≈ B
+    # the idea here is to cut ξ in half until ESS ≈ B
     while true
         # see equation (8) from Duan & Fulop and note ph is log valued
-        sh = (εh-ε)*ph
+        sh = (ξh-ξ)*ph
 
-        Sh2 = Sh1.+sh
-        Sh2 = exp.(Sh2.-maximum(Sh2))
-        Sh2 = Sh2/sum(Sh2)
+        Sh = S1.+sh
+        Sh = exp.(Sh.-maximum(Sh))
+        S2 = Sh/sum(Sh)
 
-        # if ESS ≈ B break, else ε = .5*ε
-        ESS(Sh2)-threshold < 1.0 ? εh *= .5 : break
+        # if ESS ≈ B break, else ξ = .5*ξ
+        ESS(S2)-B < 1.0 ? ξh *= .5 : break
     end
 
-    return εh,log.(Sh2)
+    return ξh,log.(S2)
+end
+
+
+"""
+    gridSearch(B,ph[l-1],S[l-1],ξ[l-1])
+
+Searches the unit interval for the optimal step size `ξ` by way of a
+grid search. This is likely more compuationally intense than the other
+method, and thus is least preferred; although this is the chosen
+routine performed in the paper.
+
+This is curently unused, and only serves as a placeholder until I know
+for sure whether it makes a difference
+"""
+function gridSearch(B,ph,S1,ξ)
+    ξh  = Vector(0.0:0.0005:1.0)
+    nξ  = length(ξh)
+    
+    S2 = zeros(Float64,nξ,length(S1))
+    search_space = zeros(Float64,nξ)
+
+    for i in 1:nξ
+        # see equation (8) from Duan & Fulop
+        sh = (ξh[i]-ξ)*ph
+
+        Sh = S1.+sh
+        Sh = exp.(Sh.-maximum(Sh))
+        S2[i,:] = Sh/sum(Sh)
+
+        search_space[i] = abs(ESS(S2[i,:])-B)
+    end
+    
+    _,idx = findmin(search_space)
+    return ξh[idx],S2[idx,:]
 end
 
 
@@ -118,7 +150,7 @@ function densityTemperedSMC(N::Int64,M::Int64,P::Int64,y::Vector{Float64},θ₀:
     # initialize sequences (eventually replace 4 with length(priors))
     θ  = [zeros(Float64,k,N) for _ in 1:P]
     ph,S = ([zeros(Float64,N) for _ in 1:P] for _ in 1:4)
-    ε = zeros(Float64,P)
+    ξ = zeros(Float64,P)
 
     # pick an initial guess for θ, and make sure Q,R > 0
     θ[1][1,:] = rand(TruncatedNormal(θ₀[1],1,-1,1),N)
@@ -149,8 +181,8 @@ function densityTemperedSMC(N::Int64,M::Int64,P::Int64,y::Vector{Float64},θ₀:
     for l in 2:P
         next!(pbar)
 
-        # perform a binary search to find ε s.t. ESS ≈ N/2
-        ε[l],S[l] = binarySearch(N/2,ph[l-1],S[l-1],ε[l-1])
+        # perform a binary search to find ξ s.t. ESS ≈ N/2
+        ξ[l],S[l] = binarySearch(N/2,ph[l-1],S[l-1],ξ[l-1])
         θ[l] = hcat([wsample(θ[l-1][i,:],exp.(S[l]),N) for i in 1:k]...)'
         
         mθ[1] = mθ[2]
@@ -168,8 +200,8 @@ function densityTemperedSMC(N::Int64,M::Int64,P::Int64,y::Vector{Float64},θ₀:
             ph[l][i] = sum(bootstrapFilter(M,y,mod_i)[1])
 
             # MH step (not encased in function since it's iterated)
-            γ = ε[l]*ph[l][i]+logpdfPrior(θ[l][:,i],θ₀)
-            γ = γ-(ε[l]*ph[l-1][i]+logpdfPrior(θ[l-1][:,i],θ₀))
+            γ = ξ[l]*ph[l][i]+logpdfPrior(θ[l][:,i],θ₀)
+            γ = γ-(ξ[l]*ph[l-1][i]+logpdfPrior(θ[l-1][:,i],θ₀))
 
             h = logpdfPrior(θ[l-1][:,i],mθ[2],σθ[2])
             h = h-logpdfPrior(θ[l][:,i],mθ[1],σθ[1])
