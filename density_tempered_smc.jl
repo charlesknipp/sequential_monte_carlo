@@ -24,12 +24,16 @@ end
 Searches the unit interval for the optimal step size `ξ` by way of a 
 bisection method as opposed to a grid search.
 """
-function binarySearch(B,ph,S1,ξ)
-    ξh = 1.0
+function binarySearch(B,ph,S1,ξ,ε=1.0,max_iters=1000)
+    ξu,ξl,ξh = 1.0,0.0,0.5
+
     S2 = 0.0
+    i  = 1
 
     # the idea here is to cut ξ in half until ESS ≈ B
-    while true
+    while i <= max_iters
+        ξh = .5*(ξu+ξl)
+
         # see equation (8) from Duan & Fulop and note ph is log valued
         sh = (ξh-ξ)*ph
 
@@ -37,8 +41,16 @@ function binarySearch(B,ph,S1,ξ)
         Sh = exp.(Sh.-maximum(Sh))
         S2 = Sh/sum(Sh)
 
-        # if ESS ≈ B break, else ξ = .5*ξ
-        ESS(S2)-B < 1.0 ? ξh *= .5 : break
+        N_eff = ESS(S2)
+        i += 1
+
+        if N_eff-B < ε
+            ξu = ξh*.5
+        elseif N_eff-B > ε
+            ξl *= ξh*.5
+        else
+            break
+        end
     end
 
     return ξh,log.(S2)
@@ -57,7 +69,7 @@ This is curently unused, and only serves as a placeholder until I know
 for sure whether it makes a difference
 """
 function gridSearch(B,ph,S1,ξ)
-    ξh  = Vector(0.0:0.0005:1.0)
+    ξh  = Vector(0.0:0.005:1.0)
     nξ  = length(ξh)
     
     S2 = zeros(Float64,nξ,length(S1))
@@ -184,6 +196,9 @@ function densityTemperedSMC(N::Int64,M::Int64,P::Int64,y::Vector{Float64},θ₀:
         # perform a binary search to find ξ s.t. ESS ≈ N/2
         ξ[l],S[l] = binarySearch(N/2,ph[l-1],S[l-1],ξ[l-1])
         θ[l] = hcat([wsample(θ[l-1][i,:],exp.(S[l]),N) for i in 1:k]...)'
+
+        # rejuvination if ESS < B
+        if (ESS(exp.(S[l])) < N/2) S[l] = [-log(N) for _ in 1:N] end
         
         mθ[1] = mθ[2]
         σθ[1] = σθ[2]
@@ -195,7 +210,6 @@ function densityTemperedSMC(N::Int64,M::Int64,P::Int64,y::Vector{Float64},θ₀:
         for i in 1:N
             θi = θ[l][:,i]
 
-            # TODO: make ph log valued and find ph = sum of bf[1]
             mod_i = NDLM(θi[1],θi[2],θi[3],θi[4])
             ph[l][i] = sum(bootstrapFilter(M,y,mod_i)[1])
 
@@ -216,5 +230,5 @@ function densityTemperedSMC(N::Int64,M::Int64,P::Int64,y::Vector{Float64},θ₀:
     end
 
     finish!(pbar)
-    return θ
+    return θ,ξ
 end
