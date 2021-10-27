@@ -1,9 +1,10 @@
 using LinearAlgebra,Statistics,Random,Distributions
 using ProgressMeter
 
-include("density_tempered_smc.jl")
-include("dynamic_model.jl")
-include("particle_filter.jl")
+# import helper functions
+include("src/density_tempered_smc.jl")
+include("src/dynamic_model.jl")
+include("src/particle_filter.jl")
 
 
 ########################## TESTING BLOCK 1 ##########################
