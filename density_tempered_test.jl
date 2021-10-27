@@ -3,9 +3,6 @@ using ProgressMeter
 
 # import helper functions
 include("src/density_tempered_smc.jl")
-include("src/dynamic_model.jl")
-include("src/particle_filter.jl")
-
 
 ########################## TESTING BLOCK 1 ##########################
 

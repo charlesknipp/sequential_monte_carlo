@@ -1,6 +1,9 @@
 using LinearAlgebra,Statistics,Random,Distributions
 using ProgressMeter
 
+include("dynamic_model.jl")
+include("particle_filter.jl")
+
 
 """
     ESS(w)
