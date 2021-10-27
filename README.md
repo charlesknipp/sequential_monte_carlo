@@ -15,7 +15,7 @@ Note, `x0` and `Σ0` are set around the origin with unit deviation, but these ca
 
 ## Filters
 
-If the name doesn't give it away, a large part of this module is filtering. Which can be broken down into two categories: observed parameters or unobserved parameters. For the first category there are currently 3 working filters: a Kalman Filter, a bootstrap filter, and an auxiliary particle filter. The other category currently only has one filter: the density tempered marginalized sequential monte carlo sampler based on the paper of the same name by J. Duan and A. Fulop.
+If the name doesn't give it away, a large part of this module is filtering. Which can be broken down into two categories: observed parameters or unobserved parameters. For the first category there are currently three working filters: a Kalman Filter, a bootstrap filter, and an auxiliary particle filter. Likewise, we define two more filters: the density tempered marginalized sequential monte carlo sampler (J. Duan and A. Fulop) as well as SMC² (N. Chopin).
 
 ### Kalman Filter
 
@@ -83,3 +83,10 @@ If we directly compare the previous three filters we get the following:
 ### Density Tempered Marginalized Sequential Monte Carlo
 
 This work in progress algorithm was inspired by the paper of the same name by J. Duan and A. Fulop, and is implemented as the function `densityTemperedSMC()`. As mentioned this is a work in progress and while it compiles, the parameters that it outputs are only in rough neighborhoods of where they are expected to be.
+
+
+### SMC²
+
+As the algorithm's creater describes it, SMC² is "an efficient algorithm for sequential analysis of state space models". The eponymous paper by N. Chopin outlines these efficiencies by considering iterative batch sampling (IBIS) in conjuction with Monte Carlo methods which transform the analytical intractibility of IBIS into a very feasible, yet memory efficient algorithm. This program defines the function `SMC²()` to represent Chopin's idea.
+
+Like the previous algorithm, this is still a work in progress.
