@@ -3,6 +3,7 @@ using ProgressMeter
 
 include("dynamic_model.jl")
 include("particle_filter.jl")
+# include("truncated_mv_normal.jl")   # this is a WIP
 
 
 """
@@ -12,47 +13,14 @@ Computes the effective sample size of a given model using the weights.
 For Fulop & Duan, the weights are the vector S[l] at dist. l, while
 particle filters use the vector of weights w.
 """
-function ESS(w::Vector{Float64})
-    return 1/sum(w.^2)
-end
+function ESS(logx::Vector{Float64})
+    max_logx = maximum(logx)
+    x_scaled = exp.(logx.-max_logx)
 
+    ESS = sum(x_scaled)^2 / sum(x_scaled.^2)
+    if ESS == NaN; ESS = 0.0 end
 
-"""
-    binarySearch(B,ph[l-1],S[l-1],ξ[l-1])
-
-Searches the unit interval for the optimal step size `ξ` by way of a 
-bisection method as opposed to a grid search.
-"""
-function binarySearch(B,ph,S1,ξ,ε=1.0,max_iters=1000)
-    ξu,ξl,ξh = 1.0,0.0,0.5
-
-    S2 = 0.0
-    i  = 1
-
-    # the idea here is to cut ξ in half until ESS ≈ B
-    while i <= max_iters
-        ξh = .5*(ξu+ξl)
-
-        # see equation (8) from Duan & Fulop and note ph is log valued
-        sh = (ξh-ξ)*ph
-
-        Sh = S1.+sh
-        Sh = exp.(Sh.-maximum(Sh))
-        S2 = Sh/sum(Sh)
-
-        N_eff = ESS(S2)
-        i += 1
-
-        if N_eff-B < ε
-            ξu = ξh*.5
-        elseif N_eff-B > ε
-            ξl = ξh*.5
-        else
-            break
-        end
-    end
-
-    return ξh,log.(S2)
+    return ESS
 end
 
 
@@ -67,12 +35,9 @@ routine performed in the paper.
 This is curently unused, and only serves as a placeholder until I know
 for sure whether it makes a difference
 """
-function gridSearch(B,ph,S1,ξ1,step=0.005)
-    nξ = length(ξh)
-    nS = length(S1)
-
-    ξ2 = Vector(0.0:step:1.0)
-    S2 = zeros(Float64,nξ,nS)
+function gridSearch(B::Number,ph::AbstractArray,S1::AbstractArray,ξ1::Float64,step=0.0001)
+    ξ2 = Vector(ξ1:step:1.0)
+    nξ = length(ξ2)
     
     ξ = ξ1
     S = S1
@@ -80,23 +45,22 @@ function gridSearch(B,ph,S1,ξ1,step=0.005)
     for i in 1:nξ
         # see equation (8) from Duan & Fulop
         sh = (ξ2[i]-ξ1)*ph
-
         Sh = S1.+sh
-        Sh = exp.(Sh.-maximum(Sh))
 
-        S2[i,:] = Sh/sum(Sh)
-        N_eff   = ESS(S2[i,:])
+        N_eff = ESS(Sh)
         
-        if N_eff >= B
-            # pick ξ such that ESS is the upper limit of B
-            ξ,S = ξ[i-1],S[i-1]
+        if N_eff > B
+            # pick ξ such that ESS is the upper limit of {x|∀x < B}
+            ξ,S = ξ2[i],Sh
         else
-            # for the case that ξ == 1.0
-            ξ,S = ξ[i],S[i]
+            break
         end
     end
-    
-    return ξ,S
+
+    S = exp.(S.-maximum(S))
+    S = S/sum(S)
+
+    return ξ,log.(S)
 end
 
 
@@ -130,6 +94,26 @@ function logpdfPrior(θ,μ,Σ=[1.0,1.0,1.0,1.0])
     pR = logpdf(TruncatedNormal(μ[4],Σ[4],0,Inf),θ[4])
 
     return sum([pA,pB,pQ,pR])
+end
+
+
+"""
+    randomWalk(log_weight,x,c)
+
+Document later...
+"""
+function randomWalk(log_weight::Vector{Float64},x::Matrix{Float64},c::Float64=.5)
+    max_x = maximum(x,dims=2)
+    ω = exp.(log_weight.-maximum(log_weight))
+
+    # Pawels calculation of μ
+    μ = [exp(max_x[i])*sum(ω.*exp.(x[i,:].-max_x[i]))/sum(ω) for i in 1:4]    
+
+    # Chopin's calculation
+    μ = [sum(ω.*x[i,:])/sum(ω) for i in 1:4]
+    σ = cov(x,weights(ω),2)
+
+    return MvNormal(μ,c*σ)
 end
 
 
@@ -170,7 +154,7 @@ function densityTemperedSMC(N::Int64,M::Int64,P::Int64,y::Vector{Float64},θ₀:
 
     # initialize sequences (eventually replace 4 with length(priors))
     θ  = [zeros(Float64,k,N) for _ in 1:P]
-    ph,S = ([zeros(Float64,N) for _ in 1:P] for _ in 1:4)
+    ph,S = ([zeros(Float64,N) for _ in 1:P] for _ in 1:2)
     ξ = zeros(Float64,P)
 
     # pick an initial guess for θ, and make sure Q,R > 0
@@ -202,12 +186,12 @@ function densityTemperedSMC(N::Int64,M::Int64,P::Int64,y::Vector{Float64},θ₀:
     for l in 2:P
         next!(pbar)
 
-        # perform a binary search to find ξ s.t. ESS ≈ N/2
+        # perform a grid search to find max(ξ) such that ESS < N/2
         ξ[l],S[l] = gridSearch(N/2,ph[l-1],S[l-1],ξ[l-1])
         θ[l] = hcat([wsample(θ[l-1][i,:],exp.(S[l]),N) for i in 1:k]...)'
 
-        # rejuvination if ESS < B
-        if (ESS(exp.(S[l])) < N/2) S[l] = [-log(N) for _ in 1:N] end
+        # rejuvinate
+        S[l] = [-log(N) for _ in 1:N]
         
         mθ[1] = mθ[2]
         σθ[1] = σθ[2]
