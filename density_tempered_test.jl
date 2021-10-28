@@ -135,9 +135,9 @@ P = 100
 M = 65
 k = length(θ₀)
 
-# initialize sequences (eventually replace 4 with length(priors))
+# initialize sequences
 θ  = [zeros(Float64,k,N) for _ in 1:P]
-ph,S = ([zeros(Float64,N) for _ in 1:P] for _ in 1:4)
+ph,S = ([zeros(Float64,N) for _ in 1:P] for _ in 1:2)
 ξ = zeros(Float64,P)
 
 # pick an initial guess for θ, and make sure Q,R > 0
@@ -165,7 +165,7 @@ mθ = [0,map(i -> mean(θ[1][i,:]),1:k)]
 # @distributed to run in parallel (is not currently efficient)
 
 # perform a binary search to find ε s.t. ESS ≈ N/2
-l=3
+l=2
 
 ξ[l],S[l] = gridSearch(N/2,ph[l-1],S[l-1],ξ[l-1])
 θ[l] = hcat([wsample(θ[l-1][i,:],exp.(S[l]),N) for i in 1:k]...)'
