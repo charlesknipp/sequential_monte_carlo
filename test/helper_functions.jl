@@ -74,7 +74,7 @@ function r_trunc_mult_norm(mean_par, cov_par, lowerbnd, upperbnd, fixpar = NULL)
 end
 
 # evaluate proposal denisty of transition to x_prop
-function D_trunc_mult_norm(x_prop, mean_par, cov_par, lowerbnd, upperbnd, fixpar = NULL) {
+function D_trunc_mult_norm(x_prop, mean_par, cov_par, lowerbnd, upperbnd, fixpar = NULL)
     Sigma_list = map(
         j_par -> begin
             Sig_mix = cov_par[-j_par, -j_par] \ cov_par[-j_par, j_par]
