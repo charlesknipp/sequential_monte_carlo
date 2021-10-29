@@ -1,46 +1,55 @@
-using Distributions
+using Distributions,LinearAlgebra
 
-function mvTruncated(d::MultivariateDistribution,l::Vector{Real},u::Vector{Real})
-    return truncated(d,promote(l,u)...)
+
+function randTruncatedMvNormal(μ,Σ,l,u)
+    n = length(μ)
+    x = μ
+
+    for i in 1:n
+        # convert covariance into a block matrix
+        Σ11,Σ22 = Σ[i,i],Σ[1:end .!= i,1:end .!= i]
+        Σ12,Σ21 = Σ[1:end .!= i,i]',Σ[1:end .!= i,i]
+
+        x2 = x[1:end .!= i]
+        μ1,μ2 = μ[i],μ[1:end .!= i]
+
+        condΣ = Σ11 - Σ12*inv(Σ22)*Σ21
+        condμ = μ1 + Σ12*inv(Σ22)*(x2-μ2)
+
+        lcdf = cdf(Normal(condμ,sqrt(condΣ)),l[i])
+        ucdf = cdf(Normal(condμ,sqrt(condΣ)),u[i])
+        prob = rand(Uniform(lcdf,ucdf))
+
+        x[i] = quantile(Normal(),prob)*condΣ + condμ
+    end
+
+    return x
 end
 
-function mvTruncated(d::MultivariateDistribution,l::Vector{T},u::Vector{T}) where {T <: Real}
-    for i in 1:length(l)
-        l[i] <= u[i] || error("the lower bound must be less or equal than the upper bound")
+
+function pdfTruncatedMvNormal(proposal,μ,Σ,l,u)
+    n = length(μ)
+    x = μ
+
+    logprob = 0
+
+    for i in 1:n
+        # convert covariance into a block matrix
+        Σ11,Σ22 = Σ[i,i],Σ[1:end .!= i,1:end .!= i]
+        Σ12,Σ21 = Σ[1:end .!= i,i]',Σ[1:end .!= i,i]
+
+        x2 = x[1:end .!= i]
+        μ1,μ2 = μ[i],μ[1:end .!= i]
+
+        condΣ = Σ11 - Σ12*inv(Σ22)*Σ21
+        condμ = μ1 + Σ12*inv(Σ22)*(x2-μ2)
+
+        p1 = logpdf(Normal(condμ,sqrt(condΣ)),proposal[i])
+        p2 = log(cdf(Normal(),u[i])-cdf(Normal(),l[i]))
+        logprob += (p1-p2)
+
+        x[i] = proposal[i]
     end
 
-    # (log)lcdf = (log) P(X < l) where X ~ d
-    loglcdf = if value_support(typeof(d)) === Discrete
-        logsubexp(logcdf(d,l),logpdf(d,l))
-    else
-        logcdf(d,l)
-    end
-    lcdf = exp(loglcdf)
-
-    # (log)ucdf = (log) P(X ? u) where X ~ d
-    logucdf = logcdf(d,u)
-    ucdf = exp(logucdf)
-
-    # (log)tp = (log) P(l ? X ? u) where X ? d
-    logtp = logsubexp(loglcdf,logucdf)
-    tp = exp(logtp)
-
-    Truncated(d,promote(l,u,lcdf,ucdf,tp,logtp)...)
-end
-
-mvTruncated(d::MultivariateDistribution,l::Vector{Integer},u::Vector{Integer}) = truncated(d,float.(l),float.(u))
-
-struct MvTruncated{D<:MultivariateDistribution,S<:ValueSupport,T<:Real} <: MultivariateDistribution{S}
-    untruncated::D      # the original distribution (untruncated)
-    lower::Vector{T}      # lower bound
-    upper::Vector{T}      # upper bound
-    lcdf::T       # cdf of lower bound
-    ucdf::T       # cdf of upper bound
-
-    tp::T         # the probability of the truncated part, i.e. ucdf - lcdf
-    logtp::T      # log(tp), i.e. log(ucdf - lcdf)
-
-    function Truncated(d::UnivariateDistribution,l::Vector{T},u::Vector{T},lcdf::T,ucdf::T,tp::T,logtp::T) where {T <: Real}
-        new{typeof(d),value_support(typeof(d)),T}(d,l,u,lcdf,ucdf,tp,logtp)
-    end
+    return logprob
 end
