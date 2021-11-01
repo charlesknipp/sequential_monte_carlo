@@ -1,6 +1,12 @@
 using Distributions,LinearAlgebra
 
 
+"""
+    randTruncatedMvNormal(N,μ,Σ,l,u)
+
+Generates a random sample of θs given parameters μ and Σ. We use a
+truncated normal distribution such that A,B ∈ (-1,1) and Q,R ∈ (0,Inf).
+"""
 function randTruncatedMvNormal(N::Int64,μ::Vector{Float64},Σ::Matrix{Float64},l,u)
     k = length(μ)
     x = ones(Float64,k,N).*μ
@@ -28,6 +34,12 @@ function randTruncatedMvNormal(N::Int64,μ::Vector{Float64},Σ::Matrix{Float64},
 end
 
 
+"""
+    logpdfTruncatedMvNormal(proposal,μ,Σ,l,u)
+
+Calculates the log density at θ given parameters μ and Σ. We use a
+truncated normal distribution such that A,B ∈ (-1,1) and Q,R ∈ (0,Inf).
+"""
 function logpdfTruncatedMvNormal(proposal::Vector{Float64},μ::Vector{Float64},Σ::Matrix{Float64},l,u)
     k = length(μ)
     x = μ

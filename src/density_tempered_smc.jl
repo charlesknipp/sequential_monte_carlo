@@ -1,4 +1,4 @@
-using LinearAlgebra,Statistics,Random,Distributions
+using LinearAlgebra,Statistics,Random,Distributions,StatsBase
 using ProgressMeter
 
 
@@ -96,22 +96,40 @@ end
 """
     randomWalk(log_weight,x,c)
 
-Document later...
+Currently a work in progress which takes inspiration from an analogous
+process writing in Chopin's SMC² algorithm.
 """
 function randomWalk(log_weight::Vector{Float64},x::Matrix{Float64},c::Float64=.5)
+    k,_ = size(x)
     max_x = maximum(x,dims=2)
     ω = exp.(log_weight.-maximum(log_weight))
 
     # Pawels calculation of μ
-    μ = [exp(max_x[i])*sum(ω.*exp.(x[i,:].-max_x[i]))/sum(ω) for i in 1:4]    
+    μ = [exp(max_x[i])*sum(ω.*exp.(x[i,:].-max_x[i]))/sum(ω) for i in 1:k]    
 
     # Chopin's calculation
-    μ = [sum(ω.*x[i,:])/sum(ω) for i in 1:4]
-    σ = cov(x,weights(ω),2)
+    μ = [sum(ω.*x[i,:])/sum(ω) for i in 1:k]
+    σ = wcov(x,μ,ω)
 
     return MvNormal(μ,c*σ)
 end
 
+
+"""
+    wcov(X,μ,w)
+
+Calculates the weighted covariance along dimension 2 of the matrix X
+"""
+function wcov(X::Matrix{Float64},μ::Vector{Float64},w::Vector{Float64})
+    k,_ = size(X)
+    Σi  = zeros(Float64,k,k)
+
+    for i in 1:length(w)
+        Σi += w[i]*((X[:,i] - μ)*(X[:,i] - μ)')
+    end
+
+    return Σi /sum(w)
+end
 
 """
     densityTemperedSMC(N,M,P,y,θ₀)
