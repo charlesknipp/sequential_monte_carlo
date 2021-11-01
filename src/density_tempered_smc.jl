@@ -1,10 +1,6 @@
 using LinearAlgebra,Statistics,Random,Distributions
 using ProgressMeter
 
-include("dynamic_model.jl")
-include("particle_filter.jl")
-# include("truncated_mv_normal.jl")   # this is a WIP
-
 
 """
     ESS(w)
@@ -151,6 +147,11 @@ or the binary search.
 """
 function densityTemperedSMC(N::Int64,M::Int64,P::Int64,y::Vector{Float64},θ₀::Vector{Float64})
     k = length(θ₀)
+    lb = zeros(Float64,k)
+    ub = ones(Float64,k)
+
+    # define the initial standard deviation by I(k)
+    Σ₀ = Matrix{Float64}(I,k,k)
 
     # initialize sequences (eventually replace 4 with length(priors))
     θ  = [zeros(Float64,k,N) for _ in 1:P]
@@ -158,10 +159,7 @@ function densityTemperedSMC(N::Int64,M::Int64,P::Int64,y::Vector{Float64},θ₀:
     ξ = zeros(Float64,P)
 
     # pick an initial guess for θ, and make sure Q,R > 0
-    θ[1][1,:] = rand(TruncatedNormal(θ₀[1],1,-1,1),N)
-    θ[1][2,:] = rand(TruncatedNormal(θ₀[2],1,-1,1),N)
-    θ[1][3,:] = rand(TruncatedNormal(θ₀[3],1,0,Inf),N)
-    θ[1][4,:] = rand(TruncatedNormal(θ₀[4],1,0,Inf),N)
+    θ[1] = randTruncatedMvNormal(N,θ₀,Σ₀,zeros(k),ones(k))
 
     # initialization can be parallelized for i ϵ 1,..,N
     for i in 1:N
@@ -176,8 +174,8 @@ function densityTemperedSMC(N::Int64,M::Int64,P::Int64,y::Vector{Float64},θ₀:
     end
 
     # store standard deviation & mean of θ[1] for initialization
-    mθ = [0,map(i -> mean(θ[1][i,:]),1:k)]
-    σθ = [0,map(i -> std(θ[1][i,:]),1:k)]
+    mθ = [0,mean(θ[1],dims=2)]
+    σθ = [0,cov(θ[1],dims=2)]
 
     # track the ETA for the algorithm
     pbar = Progress(P,1)
@@ -196,8 +194,8 @@ function densityTemperedSMC(N::Int64,M::Int64,P::Int64,y::Vector{Float64},θ₀:
         mθ[1] = mθ[2]
         σθ[1] = σθ[2]
 
-        mθ[2] = map(i -> mean(θ[l][i,:]),1:k)
-        σθ[2] = map(i -> std(θ[l][i,:]),1:k)
+        mθ[2] = mean(θ[l],dims=2)
+        σθ[2] = cov(θ[l],dims=2)
 
         # this can be parallelized for i ϵ 1,..,N
         for i in 1:N
@@ -207,11 +205,11 @@ function densityTemperedSMC(N::Int64,M::Int64,P::Int64,y::Vector{Float64},θ₀:
             ph[l][i] = sum(bootstrapFilter(M,y,mod_i)[1])
 
             # MH step (not encased in function since it's iterated)
-            γ = ξ[l]*ph[l][i]+logpdfPrior(θ[l][:,i],θ₀)
-            γ = γ-(ξ[l]*ph[l-1][i]+logpdfPrior(θ[l-1][:,i],θ₀))
+            γ = ξ[l]*ph[l][i]+logpdfTruncatedMvNormal(θ[l][:,i],θ₀,Σ₀,lb,ub)
+            γ = γ-(ξ[l]*ph[l-1][i]+logpdfTruncatedMvNormal(θ[l-1][:,i],θ₀,Σ₀,lb,ub))
 
-            h = logpdfPrior(θ[l-1][:,i],mθ[2],σθ[2])
-            h = h-logpdfPrior(θ[l][:,i],mθ[1],σθ[1])
+            h = logpdfTruncatedMvNormal(θ[l-1][:,i],mθ[2],σθ[2],lb,ub)
+            h = h-logpdfTruncatedMvNormal(θ[l][:,i],mθ[1],σθ[1],lb,ub)
 
             α = min(1,exp(γ+h))
             u = rand()
