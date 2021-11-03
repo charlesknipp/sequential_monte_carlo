@@ -104,15 +104,15 @@ function randomWalk(log_weight::Vector{Float64},x::Matrix{Float64},c::Float64=.5
     max_x = maximum(x,dims=2)
     ω = exp.(log_weight.-maximum(log_weight))
 
-    # Pawels calculation of μ
-    # μ = [exp(max_x[i])*sum(ω.*exp.(x[i,:].-max_x[i]))/sum(ω) for i in 1:k]
+    # Pawels calculations
+    μ = [exp(max_x[i])*sum(ω.*exp.(x[i,:].-max_x[i]))/sum(ω) for i in 1:k]
     # σ = cor(x,Weights(ω),dims=2)
 
-    # Chopin's calculation
-    μ = [sum(ω.*x[i,:])/sum(ω) for i in 1:k]
+    # Chopin's calculations
+    # μ = [sum(ω.*x[i,:])/sum(ω) for i in 1:k]
     σ = wcov(x,μ,ω)
 
-    return randTruncatedMvNormal(n,μ,σ,zeros(k),ones(k))
+    return randTruncatedMvNormal(n,μ,sqrt.(σ),zeros(k),ones(k))
 end
 
 
@@ -193,7 +193,7 @@ function densityTemperedSMC(N::Int64,M::Int64,P::Int64,y::Vector{Float64},θ₀:
     end
 
     # store standard deviation & mean of θ[1] for initialization
-    mθ = [0,mean(θ[1],dims=2)]
+    mθ = [0,vec(mean(θ[1],dims=2))]
     σθ = [0,cov(θ[1],dims=2)]
 
     # track the ETA for the algorithm
@@ -214,7 +214,7 @@ function densityTemperedSMC(N::Int64,M::Int64,P::Int64,y::Vector{Float64},θ₀:
         mθ[1] = mθ[2]
         σθ[1] = σθ[2]
 
-        mθ[2] = mean(θ[l],dims=2)
+        mθ[2] = vec(mean(θ[l],dims=2))
         σθ[2] = cov(θ[l],dims=2)
 
         # this can be parallelized for i ϵ 1,..,N
