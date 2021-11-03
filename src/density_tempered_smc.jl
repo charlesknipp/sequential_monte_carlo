@@ -100,18 +100,19 @@ Currently a work in progress which takes inspiration from an analogous
 process writing in Chopin's SMC² algorithm.
 """
 function randomWalk(log_weight::Vector{Float64},x::Matrix{Float64},c::Float64=.5)
-    k,_ = size(x)
+    k,n = size(x)
     max_x = maximum(x,dims=2)
     ω = exp.(log_weight.-maximum(log_weight))
 
     # Pawels calculation of μ
-    μ = [exp(max_x[i])*sum(ω.*exp.(x[i,:].-max_x[i]))/sum(ω) for i in 1:k]    
+    # μ = [exp(max_x[i])*sum(ω.*exp.(x[i,:].-max_x[i]))/sum(ω) for i in 1:k]
+    # σ = cor(x,Weights(ω),dims=2)
 
     # Chopin's calculation
     μ = [sum(ω.*x[i,:])/sum(ω) for i in 1:k]
     σ = wcov(x,μ,ω)
 
-    return MvNormal(μ,c*σ)
+    return randTruncatedMvNormal(n,μ,σ,zeros(k),ones(k))
 end
 
 
@@ -204,7 +205,8 @@ function densityTemperedSMC(N::Int64,M::Int64,P::Int64,y::Vector{Float64},θ₀:
 
         # perform a grid search to find max(ξ) such that ESS < N/2
         ξ[l],S[l] = gridSearch(N/2,ph[l-1],S[l-1],ξ[l-1])
-        θ[l] = hcat([wsample(θ[l-1][i,:],exp.(S[l]),N) for i in 1:k]...)'
+        # θ[l] = hcat([wsample(θ[l-1][i,:],exp.(S[l]),N) for i in 1:k]...)'
+        θ[l] = randomWalk(S[l],θ[l-1],.5)
 
         # rejuvinate
         S[l] = [-log(N) for _ in 1:N]
