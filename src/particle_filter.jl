@@ -28,13 +28,13 @@ x,y = simulate(100,model)
   -0.95006   -0.37365    0.10438
 ```
 """
-function bootstrapFilter(n::Int64,y::Vector{Float64},model::NDLM)
+function bootstrapFilter(n::Int64,y::Vector{Float64},model::NDLM,ret_quantiles::Bool=false)
     T = length(y)
 
-    xs = zeros(Float64,T,n)
-    qs = zeros(Float64,T,3)
-    Z  = zeros(Float64,T)
+    # if ret_sample == true; xs = zeros(Float64,T,n) end
+    if ret_quantiles == true; qs = zeros(Float64,T,3) end
 
+    Z  = zeros(Float64,T)
     x = rand(Normal(model.x0,sqrt(model.Σ0)),n)
 
     for t in 1:T
@@ -53,11 +53,15 @@ function bootstrapFilter(n::Int64,y::Vector{Float64},model::NDLM)
 
         # store the normalizing constant and sample
         Z[t] = log(mean(exp.(wt.-maximum(wt)))) + maximum(wt)
-        xs[t,:] = x
-        qs[t,:] = quantile(x,[.25,.50,.75])
+        # if ret_sample == true; xs[t,:] = x end
+        if ret_quantiles == true; qs[t,:] = quantile(x,[.25,.50,.75]) end
     end
 
-    return Z,xs,qs
+    if ret_quantiles == true
+        return Z,qs
+    else
+        return Z
+    end
 end
 
 
@@ -88,13 +92,13 @@ x,y = simulate(100,model)
   -0.95006   -0.37365    0.10438
 ```
 """
-function auxiliaryParticleFilter(n::Int64,y::Vector{Float64},model::NDLM)
+function auxiliaryParticleFilter(n::Int64,y::Vector{Float64},model::NDLM,ret_quantiles::Bool=false)
     T = length(y)
 
-    xs = zeros(Float64,T,n)
-    qs = zeros(Float64,T,3)
-    Z  = zeros(Float64,T)
+    # if ret_sample == true; xs = zeros(Float64,T,n) end
+    if ret_quantiles == true; qs = zeros(Float64,T,3) end
 
+    Z = zeros(Float64,T)
     x = rand(Normal(model.x0,sqrt(model.Σ0)),n)
 
     for t in 1:T
@@ -117,11 +121,15 @@ function auxiliaryParticleFilter(n::Int64,y::Vector{Float64},model::NDLM)
 
         # store the normalizing constant and sample
         Z[t] = mean(w2.-maximum(w2))
-        xs[t,:] = x
-        qs[t,:] = quantile(x,[.25,.50,.75])
+        # if ret_sample == true; xs[t,:] = x end
+        if ret_quantiles == true; qs[t,:] = quantile(x,[.25,.50,.75]) end
     end
 
-    return Z,xs,qs
+    if ret_quantiles == true
+        return Z,qs
+    else
+        return Z
+    end
 end
 
 
