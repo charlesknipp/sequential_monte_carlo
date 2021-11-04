@@ -1,11 +1,15 @@
 using LinearAlgebra,Statistics,Random,Distributions
 using ProgressMeter
 
+
+cd("src")
+
 # import helper functions
-include("src/dynamic_model.jl")
-include("src/particle_filter.jl")
-include("src/truncated_mv_normal.jl")
-include("src/density_tempered_smc.jl")
+include(joinpath(pwd(),"dynamic_model.jl"))
+include(joinpath(pwd(),"particle_filter.jl"))
+include(joinpath(pwd(),"truncated_mv_normal.jl"))
+include(joinpath(pwd(),"density_tempered_smc.jl"))
+
 
 ########################## TESTING BLOCK 1 ##########################
 
