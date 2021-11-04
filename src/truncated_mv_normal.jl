@@ -27,7 +27,7 @@ function randTruncatedMvNormal(N::Int64,μ::Vector{Float64},Σ::Matrix{Float64},
         ucdf = cdf(Normal(condμ,sqrt(condΣ)),u[i])
         prob = rand(Uniform(lcdf,ucdf),N)
 
-        x[i,:] = quantile(Normal(),prob)*condΣ .+ condμ
+        x[i,:] = quantile(Normal(),prob)*sqrt(condΣ) .+ condμ
     end
 
     return x
