@@ -112,7 +112,7 @@ function randomWalk(log_weight::Vector{Float64},x::Matrix{Float64},c::Float64=.5
     # μ = [sum(ω.*x[i,:])/sum(ω) for i in 1:k]
     σ = wcov(x,μ,ω)
 
-    return randTruncatedMvNormal(n,μ,sqrt.(σ),zeros(k),ones(k))
+    return randTruncatedMvNormal(n,μ,σ,zeros(k),ones(k))
 end
 
 
@@ -166,8 +166,8 @@ or the binary search.
 """
 function densityTemperedSMC(N::Int64,M::Int64,P::Int64,y::Vector{Float64},θ₀::Vector{Float64})
     k = length(θ₀)
-    lb = zeros(Float64,k)
-    ub = ones(Float64,k)
+    lb = [-1.0,-1.0,0.0,0.0]    # make sure this easily covers the real values
+    ub = [1.0,1.0,2.0,2.0]      # Q,R do not need to be bounded above
 
     # define the initial standard deviation by I(k)
     Σ₀ = Matrix{Float64}(I,k,k)
@@ -178,7 +178,7 @@ function densityTemperedSMC(N::Int64,M::Int64,P::Int64,y::Vector{Float64},θ₀:
     ξ = zeros(Float64,P)
 
     # pick an initial guess for θ, and make sure Q,R > 0
-    θ[1] = randTruncatedMvNormal(N,θ₀,Σ₀,zeros(k),ones(k))
+    θ[1] = randTruncatedMvNormal(N,θ₀,Σ₀,lb,ub)
 
     # initialization can be parallelized for i ϵ 1,..,N
     for i in 1:N
