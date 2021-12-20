@@ -96,15 +96,15 @@ end
 # simulate(test_model,100)
 
 
-const ParticleType = Union{Float, Vector{Float}}
+const ParticleType = Union{Float64,Vector{Float64}}
 
-mutable struct Particles{T <: ParticleType}
+mutable struct Particles{T<:ParticleType}
     x::Vector{T}
     logw::Vector{Float64}
 end
 
 function Particles(N::Int64,dims::Int64=1)
-    particles   = (dims == 1) ? 0.0 : zeros(Float64,dims)
+    particles = (dims == 1) ? fill(0.0,N) : fill(zeros(Float64,dims),N)
     log_weights = fill(-1*log(N),N)
 
     return Particles(particles,log_weights)
@@ -123,8 +123,8 @@ function mean(p::Particles)
 end
 
 
-mutable struct ParticleSet
-    p::Vector{Particles}
+mutable struct ParticleSet{T<:ParticleType}
+    p::Vector{Particles{T}}
 end
 
 function ParticleSet(N::Int64,dim::Int64,T::Int64)
@@ -169,10 +169,10 @@ end
 
 function bootstrapFilter(
         N::Int64,
-        y::Vector{Union{Float64,Vector{Float64}}},
+        y::Vector{Float64},
         prior::StateSpaceModel,
         B::Float64 = 0.5,
-        proposal::StateSpaceModel = nothing
+        proposal = nothing
     )
     T = length(y)
 
@@ -207,4 +207,18 @@ function bootstrapFilter(
         ps.p[t],ess[t] = resample(Particles(xt,normed_w),B)
     end
     return (ps,ess)
+end
+
+using Printf
+
+test_params = LinearGaussian(1.0,1.0,1.0,1.0)
+test_model  = StateSpaceModel(test_params)
+
+x,y = simulate(test_model,100)
+
+xs,ess = bootstrapFilter(1000,y,test_model)
+
+for i in 1:100
+    xsample = sum(xs.p[i].x)/1000
+    println(@sprintf("x_pf: %.5f\tx_sim: %.5f",xsample,x[i]))
 end
