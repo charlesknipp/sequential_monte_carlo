@@ -1,6 +1,92 @@
 using LinearAlgebra
 using Distributions
 
+############################### MiscFunctions.jl ###############################
+
+function mean(vec::Vector{T}) where T <: Number
+    # calculate the arithmetic mean of a vector of real numbers
+    μ = sum(vec)/length(vec)
+    return μ
+end
+
+# for the mean over a matrix
+function mean(mat::Matrix{T},dim::Int64=1) where T <: Number
+    μ = sum(mat,dims=dim)/size(mat,dim)
+    return μ
+end
+
+
+# generates N random points of a truncated normal distribution
+function randTruncatedMvNormal(
+        N::Int64,
+        μ::Vector{Float64},
+        Σ::Matrix{Float64},
+        l::Vector{T},
+        u::Vector{T}
+    ) where T <: Number
+
+    k = length(μ)
+    x = ones(Float64,k,N).*μ
+
+    # perform this N times over; either vectorize or iterate over another loop
+    for i in 1:k
+        # convert covariance into a block matrix
+        Σ11,Σ22 = Σ[i,i],Σ[1:end .!= i,1:end .!= i]
+        Σ12,Σ21 = Σ[1:end .!= i,i]',Σ[1:end .!= i,i]
+
+        x2 = x[1:end .!= i,1]
+        μ1,μ2 = μ[i],μ[1:end .!= i]
+
+        condΣ = Σ11 - Σ12*inv(Σ22)*Σ21
+        condμ = μ1 + Σ12*inv(Σ22)*(x2-μ2)
+
+        lcdf = cdf(Normal(condμ,sqrt(condΣ)),l[i])
+        ucdf = cdf(Normal(condμ,sqrt(condΣ)),u[i])
+        prob = rand(Uniform(lcdf,ucdf),N)
+
+        x[i,:] = quantile(Normal(),prob)*sqrt(condΣ) .+ condμ
+    end
+
+    return x
+end
+
+
+# Calculates the log density at θ given parameters μ and Σ
+function logpdfTruncatedMvNormal(
+        proposal::Vector{Float64},
+        μ::Vector{Float64},
+        Σ::Matrix{Float64},
+        l::Vector{T},
+        u::Vector{T}
+    ) where T <: Number
+
+    k = length(μ)
+    x = μ
+
+    logprob = 0
+
+    for i in 1:k
+        # convert covariance into a block matrix
+        Σ11,Σ22 = Σ[i,i],Σ[1:end .!= i,1:end .!= i]
+        Σ12,Σ21 = Σ[1:end .!= i,i]',Σ[1:end .!= i,i]
+
+        x2 = x[1:end .!= i]
+        μ1,μ2 = μ[i],μ[1:end .!= i]
+
+        condΣ = Σ11 - Σ12*inv(Σ22)*Σ21
+        condμ = μ1 + Σ12*inv(Σ22)*(x2-μ2)
+
+        p1 = logpdf(Normal(condμ,sqrt(condΣ)),proposal[i])
+        p2 = log(cdf(Normal(),u[i])-cdf(Normal(),l[i]))
+        logprob += (p1-p2)
+
+        x[i] = proposal[i]
+    end
+
+    return logprob
+end
+
+############################## StateSpaceModel.jl ##############################
 
 abstract type AbstractSSM end
 abstract type ModelParameters end
@@ -90,11 +176,7 @@ function simulate(model::StateSpaceModel,T::Int64)
     return (x,y)
 end
 
-# test_params = LinearGaussian(1.0,1.0,1.0,1.0)
-# test_model  = StateSpaceModel(test_params)
-
-# simulate(test_model,100)
-
+################################# Particles.jl #################################
 
 const ParticleType = Union{Float64,Vector{Float64}}
 
@@ -166,6 +248,7 @@ function resample(p::Particles,B::Number=Inf)::Tuple{Particles,Float64}
     end
 end
 
+############################## ParticleFilters.jl ##############################
 
 function bootstrapFilter(
         N::Int64,
@@ -194,31 +277,45 @@ function bootstrapFilter(
         xt = rand.(proposal.transition.(ps.p[t-1].x))
         w = logpdf.(prior.observation.(xt),y[t])
 
+        # simplify calculations if the proposal is not provided
         if !(proposal === nothing)
             w += logpdf.(prior.transition.(ps.p[t-1].x),xt)
             w -= logpdf.(proposal.transition.(ps.p[t-1].x),xt)
         end
 
-        #w += ps.p[t-1].logw
-        scaled_w = exp.(w.-maximum(w))
-        normed_w = scaled_w/sum(scaled_w)
-        
         #xt = [xt[:,i] for i in 1:size(xt,2)]
-        ps.p[t],ess[t] = resample(Particles(xt,normed_w),B)
+        w += ps.p[t-1].logw
+        ps.p[t],ess[t] = resample(Particles(xt,w),B)
     end
     return (ps,ess)
 end
+
+# computes the log valued likelihood of p(yₜ|yₜ₋₁)
+function normalizingConst(ps::ParticleSet)
+    T = length(ps.p)
+    Z = zeros(Float64,T)
+
+    for t in 1:T
+        logw = ps.p[t].logw
+        w    = exp.(logw.-maximum(logw))
+        μ_w  = sum(w)/length(w)
+        Z[t] = μ_w
+    end
+
+    return Z
+end
+
+################################## Testing.jl ##################################
 
 using Printf
 
 test_params = LinearGaussian(1.0,1.0,1.0,1.0)
 test_model  = StateSpaceModel(test_params)
 
-x,y = simulate(test_model,100)
+x,y  = simulate(test_model,100)
+xs,_ = bootstrapFilter(1000,y,test_model)
 
-xs,ess = bootstrapFilter(1000,y,test_model)
-
-for i in 1:100
-    xsample = sum(xs.p[i].x)/1000
-    println(@sprintf("x_pf: %.5f\tx_sim: %.5f",xsample,x[i]))
+for t in 1:100
+    μ = sum(xs.p[t].x)/1000
+    println(@sprintf("x_pf: %.5f\tx_sim: %.5f",μ,x[t]))
 end
