@@ -1,13 +1,27 @@
-using Distributions,LinearAlgebra
+export randTruncatedMvNormal,logpdfTruncatedMvNormal
+
+function mean(vec::Vector{T}) where T <: Number
+    # calculate the arithmetic mean of a vector of real numbers
+    μ = sum(vec)/length(vec)
+    return μ
+end
+
+# for the mean over a matrix
+function mean(mat::Matrix{T},dim::Int64=1) where T <: Number
+    μ = sum(mat,dims=dim)/size(mat,dim)
+    return μ
+end
 
 
-"""
-    randTruncatedMvNormal(N,μ,Σ,l,u)
+# generates N random points of a truncated normal distribution
+function randTruncatedMvNormal(
+        N::Int64,
+        μ::Vector{Float64},
+        Σ::Matrix{Float64},
+        l::Vector{T},
+        u::Vector{T}
+    ) where T <: Number
 
-Generates a random sample of θs given parameters μ and Σ. We use a
-truncated normal distribution such that A,B ∈ (-1,1) and Q,R ∈ (0,Inf).
-"""
-function randTruncatedMvNormal(N::Int64,μ::Vector{Float64},Σ::Matrix{Float64},l,u)
     k = length(μ)
     x = ones(Float64,k,N).*μ
 
@@ -34,13 +48,15 @@ function randTruncatedMvNormal(N::Int64,μ::Vector{Float64},Σ::Matrix{Float64},
 end
 
 
-"""
-    logpdfTruncatedMvNormal(proposal,μ,Σ,l,u)
+# Calculates the log density at θ given parameters μ and Σ
+function logpdfTruncatedMvNormal(
+        y::Vector{Float64},
+        μ::Vector{Float64},
+        Σ::Matrix{Float64},
+        l::Vector{T},
+        u::Vector{T}
+    ) where T <: Number
 
-Calculates the log density at θ given parameters μ and Σ. We use a
-truncated normal distribution such that A,B ∈ (-1,1) and Q,R ∈ (0,Inf).
-"""
-function logpdfTruncatedMvNormal(proposal::Vector{Float64},μ::Vector{Float64},Σ::Matrix{Float64},l,u)
     k = length(μ)
     x = μ
 
@@ -57,11 +73,11 @@ function logpdfTruncatedMvNormal(proposal::Vector{Float64},μ::Vector{Float64},�
         condΣ = Σ11 - Σ12*inv(Σ22)*Σ21
         condμ = μ1 + Σ12*inv(Σ22)*(x2-μ2)
 
-        p1 = logpdf(Normal(condμ,sqrt(condΣ)),proposal[i])
+        p1 = logpdf(Normal(condμ,sqrt(condΣ)),y[i])
         p2 = log(cdf(Normal(),u[i])-cdf(Normal(),l[i]))
         logprob += (p1-p2)
 
-        x[i] = proposal[i]
+        x[i] = y[i]
     end
 
     return logprob

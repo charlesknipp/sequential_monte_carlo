@@ -1,166 +1,91 @@
-using LinearAlgebra,Statistics,Random,Distributions
-using ProgressMeter
+# not sure this works, so I might need some testing
+function randomWalk(θ::Particles,c::Float64=0.5)
+    k = length(θ.x[1])
+    x = reduce(hcat,θ.x)
 
-include("dynamic_model.jl")
-include("particle_filter.jl")
+    # calculate the weighted mean
+    μ = [(sum(θ.w .* x[i,:]))/sum(θ.w) for i in 1:k]
+    
+    # calculate the weighted covariance
+    adjx = [x[:,m] - μ for m in 1:length(θ.x)]
+    Σ = sum(θ.w[m]*adjx[m]*adjx[m]' for m in 1:M)/sum(w)
+    # Σ = StatsBase.cov(x,μ,θ.w)
 
-
-"""
-    pdfPrior(θ,μ,Σ)
-
-Calculates the probability density at θ given parameters μ and Σ.
-We use a truncated normal distribution such that A,B ∈ (-1,1) and
-Q,R ∈ (0,Inf).
-"""
-function pdfPrior(θ,μ,Σ=[1.0,1.0,1.0,1.0])
-    pA = pdf(TruncatedNormal(μ[1],Σ[1],-1,1),θ[1])
-    pB = pdf(TruncatedNormal(μ[2],Σ[2],-1,1),θ[2])
-    pQ = pdf(TruncatedNormal(μ[3],Σ[3],0,Inf),θ[3])
-    pR = pdf(TruncatedNormal(μ[4],Σ[4],0,Inf),θ[4])
-
-    return prod([pA,pB,pQ,pR])
+    return rand(MvNormal(μ,c*Σ))
 end
 
+# not complete, and also not necessary YET
+function bootstrapStep(
+        t::Int64,
+        Θ::Vector{StateSpaceModel},
+        N::Int64,
+        y::Vector{Float64},
+        Xt::Vector{Particles},
+        B::Float64 = 0.5
+    )
+    M = length(Xt)
 
-"""
-    logpdfPrior(θ,μ,Σ)
+    for m in 1:M
+        xt = rand.(Θ[m].transition.(Xt[m].x),N)
+        wt = logpdf.(Θ[m].observation.(xt),y[t])
+        Xt[m] = resample(Particles(xt,wt),B)
+    end
 
-Calculates the log density at θ given parameters μ and Σ. We use a
-truncated normal distribution such that A,B ∈ (-1,1) and Q,R ∈ (0,Inf).
-"""
-function logpdfPrior(θ,μ,Σ=[1.0,1.0,1.0,1.0])
-    pA = logpdf(TruncatedNormal(μ[1],Σ[1],-1,1),θ[1])
-    pB = logpdf(TruncatedNormal(μ[2],Σ[2],-1,1),θ[2])
-    pQ = logpdf(TruncatedNormal(μ[3],Σ[3],0,Inf),θ[3])
-    pR = logpdf(TruncatedNormal(μ[4],Σ[4],0,Inf),θ[4])
-
-    return sum([pA,pB,pQ,pR])
+    return Xt
 end
 
-"""
-    weightFilter(y,model)
-
-Calculates the weights by way of the bootstrap filter's iterative
-process across the time dimension.
-"""
-function weightFilter(n::Int64,x::Vector{Float64},y::Float64,model::NDLM)
-    # propogate forward in time
-    x = (model.A)*x + rand(Normal(0,sqrt(model.Q)),n)
-
-    # calculate likelihood that y fits the simulated distribution
-    d  = Normal.((model.B)*x,sqrt(model.R))
-    wt = logpdf.(d,y)
-
-    # normalize weights
-    w = exp.(wt.-maximum(wt))
-    w = w/sum(w)
-
-    # store the normalizing constant
-    Z = mean(wt.-maximum(wt))
-    logZ = log(mean(exp.(wt.-maximum(wt)))) + maximum(wt)
-
-    # resample
-    κ = wsample(1:n,w,n)
-
-    return Z,logZ,κ
-end
-
-
-"""
-    logpdfPrior(θ,μ,Σ)
-
-Calculates the log density at θ given parameters μ and Σ. We use a
-truncated normal distribution such that A,B ∈ (-1,1) and Q,R ∈ (0,Inf).
-"""
-function logpdfPrior(θ,μ,Σ=[1.0,1.0,1.0,1.0])
-    pA = logpdf(TruncatedNormal(μ[1],Σ[1],-1,1),θ[1])
-    pB = logpdf(TruncatedNormal(μ[2],Σ[2],-1,1),θ[2])
-    pQ = logpdf(TruncatedNormal(μ[3],Σ[3],0,Inf),θ[3])
-    pR = logpdf(TruncatedNormal(μ[4],Σ[4],0,Inf),θ[4])
-
-    return sum([pA,pB,pQ,pR])
-end
-
-
-"""
-    prior(μ,n)
-
-Generates a random sample of n particles for the parameters in a normal
-dynamic linear model.
-"""
-function prior(μ,n)
-    # make a function to sample from prior...
-end
-
-
-"""
-    SMC²(M,y,model)
-
-A method proposed by Chopin (2012) which nputs M = # of θ particles,
-N = # of state particles, ...
-"""
-function SMC²(M::Int64,N::Int64,y::Vector{Float64},θ₀::Vector{Float64})
-    θ = zeros(Float64,4,M)
-    ω = ones(Float64,M)
+# I should write a method to perform a filter for t iterations
+function SMC2(
+        N::Int64,
+        M::Int64,
+        y::Vector{Float64},
+        θ0::Vector{Float64},
+        prior::Function,
+        B::Float64 = 0.5,
+        model = LinearGaussian
+    )
 
     T = length(y)
-    Z = zeros(Float64,T)
+    k = length(θ0)
 
-    a = zeros(Float64,T,M,N)
-    x = zeros(Float64,T,M,N)
+    θ = prior(M,θ0,Matrix{Float64}(I,k,k))
+    θ = Particles([θ[:,m] for m in 1:M])
 
-    # pick an initial guess for θ, and make sure Q,R > 0
-    θ[1,:] = rand(TruncatedNormal(θ₀[1],1,-1,1),M)
-    θ[2,:] = rand(TruncatedNormal(θ₀[2],1,-1,1),M)
-    θ[3,:] = rand(TruncatedNormal(θ₀[3],1,0,Inf),M)
-    θ[4,:] = rand(TruncatedNormal(θ₀[4],1,0,Inf),M)
+    Θ = [StateSpaceModel(model(θ.p[m].x...)) for m in 1:M]
 
-    for i in 1:M
-        modᵢ = NDLM(θ[1,i],θ[2,i],θ[3,i],θ[4,i])
+    x0 = (Θ[1].dim_x == 1) ? 0.0 : zeros(Float64,Θ[1].dim_x)
+    Xt = [Particles(rand(Θ[m].transition(x0),N)) for m in 1:M]
 
-        x[1,i,:] = rand(Normal(),N)
-        x[1,i,:] = (modᵢ.A)*x[1,i,:] .+ rand(Normal.(0,sqrt(modᵢ.Q)),N)
-    end
-
+    # perform iteration t of the bootstrap filter and reweight θ particles
     for t in 1:T
-        Z[t],_,a[t,i,:] = weightFilter(M,x[t,i,:],y[t],modᵢ)
-        x[t,i,:] = x[a[t,i,:]]
+        Xt = bootstrapStep(t,Θ,N,y,Xt,B)
+        θ  = reweight(θ,θ.logw+[Xtm.logμ for Xtm in Xt])
+        
+        # perform MH steps in case of degeneracy
+        if θ.ess < B*N
+            newθ = randomWalk(θ,0.5)
+            newΘ = [StateSpaceModel(model(newθ.p[m].x...)) for m in 1:M]
 
-        ω = Z[t]*ω
+            # perform another PF from 1:t
+            newx0 = (newΘ[1].dim_x == 1) ? 0.0 : zeros(Float64,newΘ[1].dim_x)
+            newXt = [Particles(rand(newΘ[m].transition(newx0),N)) for m in 1:M]
 
-        # degenerecy condition
+            for k in 1:t
+                newXt = bootstrapStep(k,newΘ,N,y,newXt,B)
+                newθ  = reweight(newθ,newθ.logw+[newXt[m].logμ for m in 1:M])
+            end
 
-        # MH step
-        T = MvNormal([0,0,0,0],I(4))    # not sure what to set T() as
+            # Z(θ) ≡ likelihood
+            Zt    = Xt.logμ
+            newZt = newXt.logμ
 
+            # p(θ) ≡ pdf of prior
+            pt    = logpdf(prior,θ)
+            newpt = logpdf(prior,newθ)
+
+            # T(θ) ≡ pdf of proposal distribution
+            Tt    = logpdf()
+            newTt = logpdf()
+        end
     end
-
-    return θ[t]
 end
-
-
-########################## TESTING BLOCK 1 ##########################
-
-M = 20
-N = 10
-T = 10
-
-θ = zeros(Float64,4,M)
-x = zeros(Float64,T,M,N)
-
-θ₀ = [0.6,1.0,1.0,1.0]
-
-# pick an initial guess for θ, and make sure Q,R > 0
-θ[1,:] = rand(TruncatedNormal(θ₀[1],1,-1,1),M)
-θ[2,:] = rand(TruncatedNormal(θ₀[2],1,-1,1),M)
-θ[3,:] = rand(TruncatedNormal(θ₀[3],1,0,Inf),M)
-θ[4,:] = rand(TruncatedNormal(θ₀[4],1,0,Inf),M)
-
-for i in 1:M
-    modᵢ = NDLM(θ[1,i],θ[2,i],θ[3,i],θ[4,i])
-    xᵢ   = rand(Normal(),N)
-
-    x[1,i,:] = (modᵢ.A)*xᵢ .+ rand(Normal.(0,sqrt(modᵢ.Q)),N)
-end
-
-#####################################################################
