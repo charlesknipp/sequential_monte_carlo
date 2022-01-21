@@ -1,11 +1,11 @@
-export bootstrapFilter
+export bootstrapFilter,kalmanFilter
 
 # this works, but could honestly perform a little better
 function bootstrapFilter(
         N::Int64,
         y::Vector{Float64},
         prior::StateSpaceModel,
-        B::Float64 = 0.5,
+        B::Number = 0.5,
         proposal = nothing
     )
     T = length(y)
@@ -37,6 +37,56 @@ function bootstrapFilter(
         # xt = [xt[:,i] for i in 1:size(xt,2)]
         wt += ps.p[t-1].logw
         ps.p[t] = resample(Particles(xt,wt),B)
+    end
+
+    return ps
+end
+
+# this might work, but I'm not sure and not inclined to benchmark
+function auxiliaryParticleFilter(
+        N::Int64,
+        y::Vector{Float64},
+        prior::StateSpaceModel,
+        auxiliary::Function = mean,
+        B::Number = 0.5,
+        proposal = nothing
+    )
+    T = length(y)
+
+    if proposal === nothing
+        proposal = prior
+    end
+
+    # aux must be a function of a distribution
+    aux(x) = auxiliary(prior.transition(x))
+
+    # initialize algorithm
+    ps  = ParticleSet(N,prior.dim_x,T)
+
+    # in the case where x0 is located at the origin
+    x0 = (prior.dim_x == 1) ? 0.0 : zeros(Float64,prior.dim_x)
+    p0 = Particles(rand(proposal.transition(x0),N))
+
+    ps.p[1] = resample(p0,B)
+
+    for t in 2:T
+        # first stage weights
+        wt1 = logpdf.(prior.observation(aux.(ps.p[t-1].x)))
+        xt1 = resample(reweight(ps.p[t-1].x,wt1),B)
+
+        xt2 = rand.(proposal.transition.(xt1))
+        wt2 = logpdf.(prior.observation.(xt1),y[t])
+
+        # simplify calculations if the proposal is not provided
+        if !(proposal === nothing)
+            wt2 += logpdf.(prior.transition.(ps.p[t-1].x),xt)
+            wt2 -= logpdf.(proposal.transition.(ps.p[t-1].x),xt)
+        end
+
+        ## for higher dimensions of x
+        # xt = [xt[:,i] for i in 1:size(xt,2)]
+        wt2 += ps.p[t-1].logw
+        ps.p[t] = resample(Particles(xt2,wt2),B)
     end
 
     return ps
@@ -77,8 +127,8 @@ but has the capability to expand to multiple dimensions.
 function kalmanFilter(y::Vector{Float64},model::LinearGaussian)
     T = length(y)
 
-    x = zeros(Float64,T+1,1)
-    Σ = zeros(Float64,T+1,1)
+    x = zeros(Float64,T+1,model.dim_x)
+    Σ = zeros(Float64,T+1,model.dim_x)
     
     qs = zeros(Float64,T,3)
 

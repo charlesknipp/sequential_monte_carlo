@@ -78,12 +78,13 @@ function simulate(model::StateSpaceModel,T::Int64)
     x = (model.dim_x == 1) ? 0.0 : zeros(Float64,model.dim_x)
     x = fill(x,T)
 
-    for t in 1:(T-1)
-        y[t] = rand(model.observation(x[t]))
-        x[t+1] = rand(model.transition(x[t]))
-    end
+    # initialize for x0
+    x[1] = rand(model.transition(x[1]))
 
-    y[T] = rand(model.observation(x[T]))
+    for t in 2:T
+        x[t] = rand(model.transition(x[t-1]))
+        y[t] = rand(model.observation(x[t]))
+    end
 
     return (x,y)
 end
