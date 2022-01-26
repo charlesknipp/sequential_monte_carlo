@@ -46,6 +46,12 @@ k = 4
 θ = prior(M,θ0,Matrix{Float64}(I,k,k))
 θ = Particles([θ[:,m] for m in 1:M])
 
+# simulate shit
+test_params = LinearGaussian(0.8,0.5,1.0,1.0)
+test_model  = StateSpaceModel(test_params)
+x,y = simulate(test_model,100)
+T = length(y)
+
 Θ = [StateSpaceModel(LinearGaussian(θ.x[m]...)) for m in 1:M]
 x0 = (Θ[1].dim_x == 1) ? 0.0 : zeros(Float64,Θ[1].dim_x)
 Xt = [Particles(rand(Θ[m].transition(x0),N)) for m in 1:M]

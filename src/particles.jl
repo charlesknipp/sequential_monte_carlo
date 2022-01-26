@@ -3,7 +3,7 @@ export Particles,reweight,ParticleSet,ESS,resample
 # try to make the Particles type immutable, which may entail getting rid of the
 # ParticleSet class
 
-const ParticleType = Union{Float64,Vector{Float64}}
+const ParticleType = Union{Float64,Vector{Float64},Vector{Matrix{Float64}}}
 
 mutable struct Particles{T<:ParticleType}
     # necessary parameters
@@ -51,10 +51,10 @@ function reweight(particles::Particles,log_weights::Vector{Float64})
     return Particles(particles,log_weights)
 end
 
+
 mutable struct ParticleSet{T<:ParticleType}
     p::Vector{Particles{T}}
 end
-
 
 function ParticleSet(N::Int64,dim::Int64,T::Int64)
     particle_set = [Particles(N,dim) for _ in 1:T]

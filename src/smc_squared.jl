@@ -80,7 +80,8 @@ function bootstrapStep(
     return Xt
 end
 
-# I should write a method to perform a filter for t iterations
+# Create a wrapper for SMC² with θ0 as an input where the original function
+# only takes a particle system of θs and Xs
 function SMC2(
         N::Int64,
         M::Int64,
@@ -103,7 +104,7 @@ function SMC2(
     Xt = [Particles(rand(Θ[m].transition(x0),N)) for m in 1:M]
 
     # perform iteration t of the bootstrap filter and reweight θ particles
-    for t in 1:T
+    for t in ProgressBar(1:T)
         Xt = bootstrapStep(t,Θ,N,y,Xt,B)
         θ  = reweight(θ,θ.logw+[Xtm.logμ for Xtm in Xt])
         
