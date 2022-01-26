@@ -15,7 +15,7 @@ function bootstrapFilter(
     end
 
     # initialize algorithm
-    ps  = ParticleSet(N,prior.dim_x,T)
+    ps = ParticleSet(N,prior.dim_x,T)
 
     # in the case where x0 is located at the origin
     x0 = (prior.dim_x == 1) ? 0.0 : zeros(Float64,prior.dim_x)
