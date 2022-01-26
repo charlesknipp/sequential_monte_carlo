@@ -22,6 +22,7 @@ function randomWalkMH(
         θ::Particles,
         Xt::Vector{Particles},
         N::Int64,
+        prior::Function,
         c::Float64=0.5,
         chain::Int64=10
     )
@@ -60,7 +61,6 @@ function randomWalkMH(
     return θ,Xt
 end
 
-# not complete, and also not necessary YET
 function bootstrapStep(
         t::Int64,
         Θ::Vector{StateSpaceModel},
@@ -97,7 +97,7 @@ function SMC2(
     θ = prior(M,θ0,Matrix{Float64}(I,k,k))
     θ = Particles([θ[:,m] for m in 1:M])
 
-    Θ = [StateSpaceModel(model(θ.p[m].x...)) for m in 1:M]
+    Θ = [StateSpaceModel(model(θ.x[m]...)) for m in 1:M]
 
     x0 = (Θ[1].dim_x == 1) ? 0.0 : zeros(Float64,Θ[1].dim_x)
     Xt = [Particles(rand(Θ[m].transition(x0),N)) for m in 1:M]
@@ -112,6 +112,8 @@ function SMC2(
             θ = randomWalkMH(t,θ,Xt,N,0.5,10)
         end
     end
+
+    return θ
 end
 
 #=
