@@ -1,4 +1,6 @@
-struct TruncatedMvNormal{T<:Real,Cov<:AbstractMatrix,Mean<:AbstractVector} <: ContinuousMultivariateDistribution
+export TruncatedMvNormal
+
+struct TruncatedMvNormal{T<:Real,Cov<:AbstractMatrix{T},Mean<:AbstractVector{T}} <: ContinuousMultivariateDistribution
     # distribution parameters
     μ::Mean
     Σ::Cov
