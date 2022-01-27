@@ -37,13 +37,13 @@ include(joinpath(pwd(),"src/sequential_monte_carlo.jl"))
 using .SequentialMonteCarlo
 using Printf,Random,Distributions,LinearAlgebra
 
-prior(N,μ,Σ) = randTruncatedMvNormal(N,μ,Σ,[-1.0,-1.0,0.0,0.0],[1.0,1.0,Inf,Inf])
+prior(μ,Σ) = TruncatedMvNormal(μ,Σ,[-1.0,-1.0,0.0,0.0],[1.0,1.0,Inf,Inf])
 
 M = 100
 N = 100
 k = 4
 θ0 = [0.7,0.7,1.0,1.0]
-θ = prior(M,θ0,Matrix{Float64}(I,k,k))
+θ = rand(prior(θ0,Matrix{Float64}(I,k,k)),M)
 θ = Particles([θ[:,m] for m in 1:M])
 
 # simulate shit

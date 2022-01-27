@@ -1,4 +1,4 @@
-# not sure this works, so I might need some testing
+# this only works with particles that are Vector{Float64}
 function randomWalk(θ::Particles,c::Float64=0.5)
     k = length(θ.x[1])
     M = length(θ.x)
@@ -33,7 +33,7 @@ function randomWalkMH(
 
     for _ in 1:chain
         newθ = randomWalk(θ,c)
-        newΘ = [StateSpaceModel(model(newθ.p[m].x...)) for m in 1:M]
+        newΘ = [StateSpaceModel(model(newθ.x[m]...)) for m in 1:M]
 
         # perform another PF from 1:t and OPTIMIZE THIS
         newx0 = (newΘ[1].dim_x == 1) ? 0.0 : zeros(Float64,newΘ[1].dim_x)
@@ -67,7 +67,7 @@ function bootstrapStep(
         N::Int64,
         y::Vector{Float64},
         Xt::Vector{Particles},
-        B::Float64 = 0.5
+        B::Float64
     )
     M = length(Xt)
 
@@ -80,26 +80,19 @@ function bootstrapStep(
     return Xt
 end
 
-# Create a wrapper for SMC² with θ0 as an input where the original function
-# only takes a particle system of θs and Xs
+# Base function for SMC² which takes a Particles object as input
 function SMC2(
         N::Int64,
         M::Int64,
         y::Vector{Float64},
-        θ0::Vector{Float64},
+        θ::Particles,
         prior::Function,
         B::Float64 = 0.5,
         model = LinearGaussian
     )
-
     T = length(y)
-    k = length(θ0)
-
-    θ = prior(M,θ0,Matrix{Float64}(I,k,k))
-    θ = Particles([θ[:,m] for m in 1:M])
-
-    Θ = [StateSpaceModel(model(θ.x[m]...)) for m in 1:M]
-
+    
+    Θ  = [StateSpaceModel(model(θ.x[m]...)) for m in 1:M]
     x0 = (Θ[1].dim_x == 1) ? 0.0 : zeros(Float64,Θ[1].dim_x)
     Xt = [Particles(rand(Θ[m].transition(x0),N)) for m in 1:M]
 
@@ -110,17 +103,27 @@ function SMC2(
         
         # perform MH steps in case of degeneracy of θ particles
         if θ.ess < B*M
-            θ = randomWalkMH(t,θ,Xt,N,0.5,10)
+            θ = randomWalkMH(t,θ,Xt,N,prior,0.5,5)
         end
     end
 
     return θ
 end
 
-#=
-I could possible create a class of theta particles that store information on
-the bootstrap filter results at time t, but it's more suited as an algorithm
-object so I'm not sure it's what I need.
+# this is a wrapper given a guess for the initial state θ_0
+function SMC2(
+        N::Int64,
+        M::Int64,
+        y::Vector{Float64},
+        θ0::Vector{Float64},
+        prior::Function,
+        B::Float64 = 0.5,
+        model = LinearGaussian
+    )
+    k = length(θ0)
 
-I am also not too happy with the storage of the model vector Θ
-=#
+    θ = rand(prior(θ0,Matrix{Float64}(I,k,k)),M)
+    θ = Particles([θ[:,m] for m in 1:M])
+
+    return SMC2(N,M,y,θ,prior,B,model)
+end
