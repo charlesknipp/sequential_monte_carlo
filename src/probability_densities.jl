@@ -47,7 +47,7 @@ _cov(d::TruncatedMvNormal) = d.Σ
 invcov(d::TruncatedMvNormal) = Matrix(inv(d.Σ))
 logdetcov(d::TruncatedMvNormal) = logdet(d.Σ)
 
-function _logpdf(d::TruncatedMvNormal,y::AbstractVector)
+function Distributions._logpdf(d::TruncatedMvNormal,y::AbstractVector)
     k = length(d)
     x = d.μ
 
@@ -65,7 +65,7 @@ function _logpdf(d::TruncatedMvNormal,y::AbstractVector)
         condμ = μ1 + Σ12*inv(Σ22)*(x2-μ2)
 
         p1 = logpdf(Normal(condμ,sqrt(condΣ)),y[i])
-        p2 = log(cdf(Normal(),u[i])-cdf(Normal(),l[i]))
+        p2 = log(cdf(Normal(),d.u[i])-cdf(Normal(),d.l[i]))
         logprob += (p1-p2)
 
         x[i] = y[i]

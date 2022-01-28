@@ -1,18 +1,5 @@
 export randTruncatedMvNormal,logpdfTruncatedMvNormal,ProgressBar
 
-function mean(vec::Vector{T}) where T <: Number
-    # calculate the arithmetic mean of a vector of real numbers
-    μ = sum(vec)/length(vec)
-    return μ
-end
-
-# for the mean over a matrix
-function mean(mat::Matrix{T},dim::Int64=1) where T <: Number
-    μ = sum(mat,dims=dim)/size(mat,dim)
-    return μ
-end
-
-
 # generates N random points of a truncated normal distribution
 function randTruncatedMvNormal(
         N::Int64,

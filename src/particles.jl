@@ -44,6 +44,8 @@ function Particles(N::Int64,dims::Int64=1)
     return Particles(particles,log_weights)
 end
 
+Base.length(particles::Particles) = length(particles.logw)
+
 function reweight(particles::Particles,log_weights::Vector{Float64})
     particles = particles.x
 
@@ -61,6 +63,8 @@ function ParticleSet(N::Int64,dim::Int64,T::Int64)
 
     return ParticleSet(particle_set)
 end
+
+Base.length(ps::ParticleSet) = length(ps.p)
 
 function ESS(logx::Vector{Float64})
     max_logx = maximum(logx)

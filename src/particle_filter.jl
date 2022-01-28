@@ -5,33 +5,22 @@ function bootstrapFilter(
         N::Int64,
         y::Vector{Float64},
         prior::StateSpaceModel,
-        B::Number = 0.5,
-        proposal = nothing
+        B::Number = 0.5
     )
     T = length(y)
-
-    if proposal === nothing
-        proposal = prior
-    end
 
     # initialize algorithm
     ps = ParticleSet(N,prior.dim_x,T)
 
     # in the case where x0 is located at the origin
     x0 = (prior.dim_x == 1) ? 0.0 : zeros(Float64,prior.dim_x)
-    p0 = Particles(rand(proposal.transition(x0),N))
+    p0 = Particles(rand(prior.transition(x0),N))
 
     ps.p[1] = resample(p0,B)
 
     for t in 2:T
-        xt = rand.(proposal.transition.(ps.p[t-1].x))
+        xt = rand.(prior.transition.(ps.p[t-1].x))
         wt = logpdf.(prior.observation.(xt),y[t])
-
-        # simplify calculations if the proposal is not provided
-        if !(proposal === nothing)
-            wt += logpdf.(prior.transition.(ps.p[t-1].x),xt)
-            wt -= logpdf.(proposal.transition.(ps.p[t-1].x),xt)
-        end
 
         ## for higher dimensions of x
         # xt = [xt[:,i] for i in 1:size(xt,2)]
