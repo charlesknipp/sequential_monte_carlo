@@ -11,5 +11,6 @@ include("utilities.jl")
 include("particle_filter.jl")
 include("smc_squared.jl")
 include("probability_densities.jl")
+include("density_tempered_smc.jl")
 
 end
