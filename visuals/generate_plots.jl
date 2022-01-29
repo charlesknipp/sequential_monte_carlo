@@ -1,17 +1,19 @@
-using Plots
+include(joinpath(pwd(),"src/sequential_monte_carlo.jl"))
 
+using .SequentialMonteCarlo
+using Plots,Distributions,Random
 
-cd("src")
-include(joinpath(pwd(),"dynamic_model.jl"))
-include(joinpath(pwd(),"particle_filter.jl"))
+# model definition
+params = LinearGaussian(0.8,1.0,1.0,1.0)
+model  = StateSpaceModel(params)
 
-# sim
-sims = NDLM(0.8,1.0,1.0,1.0)
-x,y = simulate(100,sims)
+# simulation
+# Random.seed!(123)
+x,y = simulate(model,100)
 
 
 # kalman filter plot
-xkf = kalmanFilter(y,sims)
+xkf = kalmanFilter(y,params)
 	
 lqkf = xkf[:,2] - xkf[:,1]
 uqkf = xkf[:,3] - xkf[:,2]
@@ -29,8 +31,14 @@ savefig(kfplot,"visuals/plots/kfplot.png")
 
 
 # bootstrap filter plot
-xbf = bootstrapFilter(1000,y,sims)[3]
-	
+# Random.seed!(123)
+xbf_p = bootstrapFilter(1000,y,model,Inf)
+xbf = zeros(Float64,100,3)
+
+for t in 1:100
+    xbf[t,:] = quantile(xbf_p.p[t].x,[.25,.50,.75])
+end
+
 lqbf = xbf[:,2] - xbf[:,1]
 uqbf = xbf[:,3] - xbf[:,2]
 
@@ -45,7 +53,7 @@ bfplot = plot(bfplot;size=default(:size).*(1.25,.75),grid=false)
 
 savefig(bfplot,"visuals/plots/bfplot.png")
 
-
+#=
 # auxiliary particle filter plot
 xpf = auxiliaryParticleFilter(1000,y,sims)[3]
 	
@@ -62,11 +70,12 @@ plot!(pfplot,x,lab="simulated x",lw=1.5,lc=:black,ls=:dash)
 pfplot = plot(pfplot;size=default(:size).*(1.25,.75),grid=false)
 
 savefig(pfplot,"visuals/plots/apfplot.png")
+=#
 
 # filter summary plot
 cumplot = plot(xkf[:,2],lab="kalman filter",lc=:red,la=.5,lw=2)
 plot!(cumplot,xbf[:,2],lab="bootstrap filter",lc=:green,la=.5,lw=2)
-plot!(cumplot,xpf[:,2],lab="auxiliary particle filter",lc=:blue,la=.5,lw=2)
+#plot!(cumplot,xpf[:,2],lab="auxiliary particle filter",lc=:blue,la=.5,lw=2)
 
 cumplot = plot(cumplot;size=default(:size).*(1.25,.75),grid=false)
 

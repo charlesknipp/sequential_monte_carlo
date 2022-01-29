@@ -1,166 +1,161 @@
-using LinearAlgebra,Statistics,Random,Distributions
-using ProgressMeter
+export SMC2
 
-include("dynamic_model.jl")
-include("particle_filter.jl")
+# FIX: will sometimes result in bad covariance matrices
+function randomWalk(θ::Particles,kernel::Function,c::Float64=0.5)
+    M = length(θ.x)
+    x = reduce(hcat,θ.x)
 
+    # calculate the weighted mean and covariance
+    μ = vec(mean(x,weights(θ.w),2))
+    Σ = cov(x,weights(θ.w),2)
 
-"""
-    pdfPrior(θ,μ,Σ)
+    # finish this to generate a particle set
+    pθ = kernel(μ,c*Σ)
+    newθ = rand(pθ,M)
 
-Calculates the probability density at θ given parameters μ and Σ.
-We use a truncated normal distribution such that A,B ∈ (-1,1) and
-Q,R ∈ (0,Inf).
-"""
-function pdfPrior(θ,μ,Σ=[1.0,1.0,1.0,1.0])
-    pA = pdf(TruncatedNormal(μ[1],Σ[1],-1,1),θ[1])
-    pB = pdf(TruncatedNormal(μ[2],Σ[2],-1,1),θ[2])
-    pQ = pdf(TruncatedNormal(μ[3],Σ[3],0,Inf),θ[3])
-    pR = pdf(TruncatedNormal(μ[4],Σ[4],0,Inf),θ[4])
-
-    return prod([pA,pB,pQ,pR])
+    return Particles([newθ[:,m] for m in 1:M]),pθ
 end
 
+# FIX: this is the most inefficient step in the entire process
+function randomWalkMH(
+        t::Int64,
+        θ::Particles,
+        Xt::ParticleSet,
+        y::Vector{Float64},
+        N::Int64,
+        prior::Function,
+        model,
+        B::Float64,
+        c::Float64=0.5,
+        chain::Int64=10
+    )
 
-"""
-    logpdfPrior(θ,μ,Σ)
+    # consider whether I should do this per particle or over the whole set
+    M = length(θ.x)
 
-Calculates the log density at θ given parameters μ and Σ. We use a
-truncated normal distribution such that A,B ∈ (-1,1) and Q,R ∈ (0,Inf).
-"""
-function logpdfPrior(θ,μ,Σ=[1.0,1.0,1.0,1.0])
-    pA = logpdf(TruncatedNormal(μ[1],Σ[1],-1,1),θ[1])
-    pB = logpdf(TruncatedNormal(μ[2],Σ[2],-1,1),θ[2])
-    pQ = logpdf(TruncatedNormal(μ[3],Σ[3],0,Inf),θ[3])
-    pR = logpdf(TruncatedNormal(μ[4],Σ[4],0,Inf),θ[4])
+    for _ in 1:chain
+        newθ,pθ = randomWalk(θ,prior,c)
+        newΘ = [StateSpaceModel(model(newθ.x[m]...)) for m in 1:M]
 
-    return sum([pA,pB,pQ,pR])
+        # perform another PF from 1:t and OPTIMIZE THIS
+        x0 = (newΘ[1].dim_x == 1) ? 0.0 : zeros(Float64,newΘ[1].dim_x)
+        newXt = [Particles(rand(newΘ[m].transition(x0),N)) for m in 1:M]
+        newXt = ParticleSet(newXt)
+
+        for k in 1:t
+            newXt = bootstrapStep(k,newΘ,y,newXt,B)
+            newwt = newθ.logw + [newXt.p[m].logμ for m in 1:M]
+            newθ  = Particles(newθ.x,newwt)
+        end
+
+        # Z(θ) ≡ likelihood, p(θ) ≡ pdf of prior
+        logZt = [Xt.p[m].logμ-newXt.p[m].logμ for m in 1:M]
+        logpt = [logpdf(pθ,θ.x[m])-logpdf(pθ,newθ.x[m]) for m in 1:M]
+
+        # acceptance ratio
+        α = exp.(logZt+logpt)
+        u = rand(M)
+
+        particles   = θ.x
+        log_weights = θ.logw
+
+        for m in 1:M
+            if u[m] ≤ minimum([α[m],1.0])
+                # resample particle and set the weight w[m] ↤ 1
+                particles[m]   = newθ.x[m]
+                log_weights[m] = 0.0
+
+                Xt.p[m] = newXt.p[m]
+            end
+        end
+
+        θ = Particles(particles,log_weights)
+    end
+
+    return θ,Xt
 end
 
-"""
-    weightFilter(y,model)
+# this works surprisingly well
+function bootstrapStep(
+        t::Int64,
+        Θ::Vector{StateSpaceModel},
+        y::Vector{Float64},
+        Xt::ParticleSet,
+        B::Float64
+    )
+    M = length(Xt)
 
-Calculates the weights by way of the bootstrap filter's iterative
-process across the time dimension.
-"""
-function weightFilter(n::Int64,x::Vector{Float64},y::Float64,model::NDLM)
-    # propogate forward in time
-    x = (model.A)*x + rand(Normal(0,sqrt(model.Q)),n)
+    # could parallelize
+    for m in 1:M
+        # resample the previous state and propogate forward
+        xt = resample(Xt.p[m],B)
+        xt = rand.(Θ[m].transition.(xt.x))
 
-    # calculate likelihood that y fits the simulated distribution
-    d  = Normal.((model.B)*x,sqrt(model.R))
-    wt = logpdf.(d,y)
+        # weight based on the likelihood of observation
+        wt = logpdf.(Θ[m].observation.(xt),y[t])
+        wt += Xt.p[m].logw
 
-    # normalize weights
-    w = exp.(wt.-maximum(wt))
-    w = w/sum(w)
+        # create a particle system with appropriate weights
+        Xt.p[m] = Particles(xt,wt)
+    end
 
-    # store the normalizing constant
-    Z = mean(wt.-maximum(wt))
-    logZ = log(mean(exp.(wt.-maximum(wt)))) + maximum(wt)
-
-    # resample
-    κ = wsample(1:n,w,n)
-
-    return Z,logZ,κ
+    return Xt
 end
 
-
-"""
-    logpdfPrior(θ,μ,Σ)
-
-Calculates the log density at θ given parameters μ and Σ. We use a
-truncated normal distribution such that A,B ∈ (-1,1) and Q,R ∈ (0,Inf).
-"""
-function logpdfPrior(θ,μ,Σ=[1.0,1.0,1.0,1.0])
-    pA = logpdf(TruncatedNormal(μ[1],Σ[1],-1,1),θ[1])
-    pB = logpdf(TruncatedNormal(μ[2],Σ[2],-1,1),θ[2])
-    pQ = logpdf(TruncatedNormal(μ[3],Σ[3],0,Inf),θ[3])
-    pR = logpdf(TruncatedNormal(μ[4],Σ[4],0,Inf),θ[4])
-
-    return sum([pA,pB,pQ,pR])
-end
-
-
-"""
-    prior(μ,n)
-
-Generates a random sample of n particles for the parameters in a normal
-dynamic linear model.
-"""
-function prior(μ,n)
-    # make a function to sample from prior...
-end
-
-
-"""
-    SMC²(M,y,model)
-
-A method proposed by Chopin (2012) which nputs M = # of θ particles,
-N = # of state particles, ...
-"""
-function SMC²(M::Int64,N::Int64,y::Vector{Float64},θ₀::Vector{Float64})
-    θ = zeros(Float64,4,M)
-    ω = ones(Float64,M)
-
+# Base function for SMC² which takes a Particles object as input
+function SMC2(
+        N::Int64,
+        M::Int64,
+        y::Vector{Float64},
+        θ::Particles,
+        prior::Function,
+        B::Float64 = 0.5,
+        model = LinearGaussian
+    )
     T = length(y)
-    Z = zeros(Float64,T)
+    
+    Θ  = [StateSpaceModel(model(θ.x[m]...)) for m in 1:M]
+    x0 = (Θ[1].dim_x == 1) ? 0.0 : zeros(Float64,Θ[1].dim_x)
+    Xt = ParticleSet([Particles(rand(Θ[m].transition(x0),N)) for m in 1:M])
 
-    a = zeros(Float64,T,M,N)
-    x = zeros(Float64,T,M,N)
+    # perform iteration t of the bootstrap filter and reweight θ particles
+    for t in ProgressBar(1:T)
+        # resample with a random walk MH kernel to avoid degeneracy
+        if θ.ess < B*M
+            θ,Xt = randomWalkMH(t,θ,Xt,y,N,prior,model,0.5,0.8,3)
+        end
 
-    # pick an initial guess for θ, and make sure Q,R > 0
-    θ[1,:] = rand(TruncatedNormal(θ₀[1],1,-1,1),M)
-    θ[2,:] = rand(TruncatedNormal(θ₀[2],1,-1,1),M)
-    θ[3,:] = rand(TruncatedNormal(θ₀[3],1,0,Inf),M)
-    θ[4,:] = rand(TruncatedNormal(θ₀[4],1,0,Inf),M)
-
-    for i in 1:M
-        modᵢ = NDLM(θ[1,i],θ[2,i],θ[3,i],θ[4,i])
-
-        x[1,i,:] = rand(Normal(),N)
-        x[1,i,:] = (modᵢ.A)*x[1,i,:] .+ rand(Normal.(0,sqrt(modᵢ.Q)),N)
+        # propogate forward and reweight
+        Xt = bootstrapStep(t,Θ,y,Xt,B)
+        wt = θ.logw + [Xt.p[m].logμ for m in 1:M]
+        θ  = Particles(θ.x,wt)
     end
 
-    for t in 1:T
-        Z[t],_,a[t,i,:] = weightFilter(M,x[t,i,:],y[t],modᵢ)
-        x[t,i,:] = x[a[t,i,:]]
-
-        ω = Z[t]*ω
-
-        # degenerecy condition
-
-        # MH step
-        T = MvNormal([0,0,0,0],I(4))    # not sure what to set T() as
-
-    end
-
-    return θ[t]
+    return θ,Xt
 end
 
+# this is a wrapper given a guess for the initial state θ_0
+function SMC2(
+        N::Int64,
+        M::Int64,
+        y::Vector{Float64},
+        θ0::Vector{Float64},
+        prior::Function,
+        B::Float64 = 0.5,
+        model = LinearGaussian
+    )
+    k = length(θ0)
 
-########################## TESTING BLOCK 1 ##########################
+    θ0 = rand(prior(θ0,Matrix{Float64}(I,k,k)),M)
+    θ0 = Particles([θ0[:,m] for m in 1:M])
 
-M = 20
-N = 10
-T = 10
-
-θ = zeros(Float64,4,M)
-x = zeros(Float64,T,M,N)
-
-θ₀ = [0.6,1.0,1.0,1.0]
-
-# pick an initial guess for θ, and make sure Q,R > 0
-θ[1,:] = rand(TruncatedNormal(θ₀[1],1,-1,1),M)
-θ[2,:] = rand(TruncatedNormal(θ₀[2],1,-1,1),M)
-θ[3,:] = rand(TruncatedNormal(θ₀[3],1,0,Inf),M)
-θ[4,:] = rand(TruncatedNormal(θ₀[4],1,0,Inf),M)
-
-for i in 1:M
-    modᵢ = NDLM(θ[1,i],θ[2,i],θ[3,i],θ[4,i])
-    xᵢ   = rand(Normal(),N)
-
-    x[1,i,:] = (modᵢ.A)*xᵢ .+ rand(Normal.(0,sqrt(modᵢ.Q)),N)
+    return SMC2(N,M,y,θ0,prior,B,model)
 end
 
-#####################################################################
+#=
+IDEA 1: consider changing Base.iterate for particles such that the filter will
+    run at each iteration, and no waste is stored in between iterations
+
+IDEA 2: create an object type for SMC² that stores exogenous characteristics of
+    the algorithm (number of θ particles, number of X particles, model, etc)
+=#
