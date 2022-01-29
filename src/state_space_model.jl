@@ -1,4 +1,4 @@
-export StateSpaceModel,LinearGaussian,simulate
+export StateSpaceModel,LinearGaussian,simulate,ModelParameters,AbstractSSM
 
 abstract type AbstractSSM end
 abstract type ModelParameters end
