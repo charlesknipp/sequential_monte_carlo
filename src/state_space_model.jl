@@ -32,7 +32,6 @@ struct LinearGaussian <: ModelParameters
         dim_x,dim_y = size(A,1),size(B,1)
 
         @assert dim_x == size(A,2) "A is not a square matrix"
-        @assert dim_y == size(B,2) "B is not a square matrix"
 
         @assert size(Q,1) == size(Q,2) "Q is not a square matrix"
         @assert size(R,1) == size(R,2) "R is not a square matrix"
