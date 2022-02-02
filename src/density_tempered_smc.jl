@@ -17,7 +17,7 @@ function gridSearch(ξ::Float64,θ::Particles,B::Float64)
 end
 
 # FIX: will sometimes result in bad covariance matrices
-function randomWalk(θ::Particles,kernel::Function,c::Float64=0.5)
+function randomWalk(θ::Particles,c::Float64=0.5)
     M = length(θ.x)
     x = reduce(hcat,θ.x)
 
@@ -26,22 +26,21 @@ function randomWalk(θ::Particles,kernel::Function,c::Float64=0.5)
     Σ = cov(x,weights(θ.w),2)
 
     # finish this to generate a particle set
-    pθ = kernel(μ,c*Σ)
-    newθ = rand(pθ,M)
+    newθ = rand(MvNormal(μ,c*Σ),M)
 
-    return Particles([newθ[:,m] for m in 1:M]),pθ
+    return Particles([newθ[:,m] for m in 1:M])
 end
 
 # this is totally untested, but the logic is 100% there
 function randomWalkMH(
-        θ::Particles,prior::Function,model,N::Int64,y::Vector{Float64},pθ::Sampleable;
+        θ::Particles,model,N::Int64,y::Vector{Float64},pθ::Sampleable;
         B::Float64=0.5,c::Float64=0.5,len_chain::Int64=5
     )
 
     M = length(θ)
 
     for _ in 1:len_chain
-        newθ = randomWalk(θ,prior,c)
+        newθ = randomWalk(θ,c)
 
         # can be parallelized
         for m in 1:M
@@ -86,11 +85,13 @@ function densityTemperedSMC(
     end
 
     while ξ ≤ 1.0
+        # find exponent ξ, reweight, and resample
         newξ = gridSearch(ξ,θ,B)
         θ = reweight(θ,[(newξ-ξ)*θ.logw[m] for m in 1:M])
+        θ = resample(θ,B)   # evaluates condition unnecessarily
 
         if θ.ess < B*M
-            θ = randomWalkMH(θ,prior,model,N,y,pθ)
+            θ = randomWalkMH(θ,model,N,y,pθ)
         end
     end
 
