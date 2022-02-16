@@ -63,8 +63,8 @@ function StateSpaceModel(params::LinearGaussian)
     Kx = (dim_x == 1) ? Normal : MvNormal
     Ky = (dim_y == 1) ? Normal : MvNormal
 
-    f(xt) = Kx(A*xt,sqrt(Q))
-    g(xt) = Ky(B*xt,sqrt(R))
+    f(xt) = Kx(A*xt,Q)
+    g(xt) = Ky(B*xt,R)
 
     return StateSpaceModel(f,g,dim_x,dim_y)
 end
