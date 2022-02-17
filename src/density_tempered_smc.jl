@@ -22,13 +22,16 @@ function randomWalk(θ::Particles,c::Float64=0.5)
     # finish this to generate a particle set
     newθ = rand(MvNormal(μ,c*Σ),M)
 
+    # this is wrong, but present for testing purposes
+    newθ[3:4,:] = abs.(newθ[3:4,:])
+
     return Particles([newθ[:,m] for m in 1:M])
 end
 
 # this is totally untested, but the logic is 100% there
 function randomWalkMH(
         θ::Particles,model,N::Int64,y::Vector{Float64},pθ::Sampleable,ξ::Float64;
-        B::Float64=0.5,c::Float64=0.5,len_chain::Int64=5
+        B::Float64=0.5,c::Float64=0.5,len_chain::Int64=3
     )
 
     M = length(θ)
@@ -47,7 +50,7 @@ function randomWalkMH(
             αm += (logpdf(pθ,θ.x[m])-logpdf(pθ,newθ.x[m]))
 
             if rand() ≤ minimum([αm,1.0])
-                θ.x[m] = newθ[m]
+                θ.x[m] = newθ.x[m]
 
                 # not sure how to set this weight
                 θ.logw[m] = 0.0
@@ -94,6 +97,7 @@ function densityTemperedSMC(
         θ = reweight(θ,[(newξ-ξ)*θ.logw[m] for m in 1:M])
 
         if θ.ess < B*M
+            println("resampling...")
             θ = resample(θ)
             θ = randomWalkMH(θ,model,N,y,pθ,newξ)
         end
