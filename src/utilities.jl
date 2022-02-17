@@ -54,7 +54,8 @@ function bisection(
         end
     end
 
-    return lower_bound
+    # this returns a value that will likely encourage resampling
+    return upper_bound
 end
 
 
