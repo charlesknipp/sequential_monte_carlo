@@ -88,3 +88,12 @@ function resample(p::Particles,B::Number=Inf)
         return p
     end
 end
+
+function resample(p::Particles)
+    N = length(p.x)
+
+    a = wsample(1:N,p.w,N)
+    x = p.x[a]
+
+    return Particles(x)
+end
