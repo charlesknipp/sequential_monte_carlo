@@ -10,6 +10,10 @@ x,y = simulate(test_model,50)
 prior(μ,Σ) = TruncatedMvNormal(μ,Σ,[-1.0,-1.0,0.0,0.0],[1.0,1.0,Inf,Inf])
 linGauss(A,B,Q,R) = LinearGaussian(A,B,Q,R)
 
-θ,w = densityTemperedSMC(100,100,y,prior,[0.3,-0.4,1.0,1.0],linGauss)
+θ,w = densityTemperedSMC(100,100,y,prior,[0.3,0.4,1.0,1.0],linGauss)
 
-mean(reduce(hcat,θ),dims=2)
+meanθ = mean(reduce(hcat,θ),weights(w),2)
+
+# print output to console
+println()
+for i in 1:4; @printf("θ[%d] = % 2.6f\n",i,meanθ[i]); end
