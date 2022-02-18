@@ -59,6 +59,9 @@ function reweight!(smc::DensityTemperedSMC)
     smc.ess = ess
     smc.ξ = newξ
 
+    # display the tempering sequence in the console
+    @printf("ξ[%0d] = %0.6f\u1b[K\n",smc.iteration,smc.ξ)
+
     # take the log of the normalized weights to reduce numerical problems
     w = exp.(logw)
     smc.w = w/sum(w)
@@ -73,24 +76,26 @@ function resample!(smc::DensityTemperedSMC)
 end
 
 function rejuvinate!(smc::DensityTemperedSMC,c::Float64,len_chain::Int64=5)
-    println("rejuvenating...")
+    print("rejuvenating...")
     θ = reduce(hcat,smc.θ)
 
     # calculate the weighted mean and covariance
     μ = vec(mean(θ,weights(smc.w),2))
     Σ = cov(θ,weights(smc.w),2)
 
-    # finish this to generate a particle set
+    # kinda sussy
     newθ = rand(MvNormal(μ,c*Σ),smc.M)
     newθ[3:4,:] = abs.(newθ[3:4,:])
 
     for _ in 1:len_chain
         u = rand(smc.M)
         for m in 1:smc.M
+            # TODO: implement new SSM behavior
             Θm = StateSpaceModel(smc.model(newθ[:,m]...))
             newXm = bootstrapFilter(smc.N,smc.y,Θm)
             logZm = sum([Xmt.logμ for Xmt in newXm.p])
 
+            # TODO: store logpdf(prior,θ) to avoid redundancies
             αm = smc.ξ*(logZm-smc.logZ[m])
             αm += (logpdf(smc.prior,smc.θ[m])-logpdf(smc.prior,newθ[:,m]))
             αm = exp(αm)
@@ -101,8 +106,12 @@ function rejuvinate!(smc::DensityTemperedSMC,c::Float64,len_chain::Int64=5)
             end
         end
     end
+
+    # reset the cursor to print ξ to stdout
+    print("\r")
 end
 
+# TODO: add [rng=GLOBAL_RNG] to aid in testing
 function densityTemperedSMC(
         M::Int64,
         N::Int64,
@@ -127,6 +136,7 @@ function densityTemperedSMC(
         logZ[m] = sum([Xmt.logμ for Xmt in Xm.p])
     end
 
+    # initialize weights at 1/M
     logw = fill(-1*log(M),M)
     w    = fill(1/M,M)
     ess  = M
@@ -144,8 +154,6 @@ function densityTemperedSMC(
             resample!(smc)
             rejuvinate!(smc,0.5)
         end
-
-        println(smc.ξ)
     end
 
     return smc.θ,smc.w
