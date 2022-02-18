@@ -1,110 +1,151 @@
 export densityTemperedSMC
 
-function gridSearch(ξ::Float64,θ::Particles,B::Float64)
-    # solve for such that θ.ess == B*M
-    M = length(θ)
+mutable struct DensityTemperedSMC
+    M::Int64
+    N::Int64
 
-    f(Δ::Float64) = ESS(Δ*θ.logw) - B*M
-    δ = bisection(f,1.e-12,1-ξ)
+    iteration::Int64
+    y::AbstractVector
 
-    return ξ+δ
+    prior::Sampleable
+    model::Function
+
+    ξ::Float64
+    B::Float64
+    logZ::Vector{Float64}
+
+    # particle characteristics
+    θ::Matrix{Float64}
+    logw::Vector{Float64}
+    w::Vector{Float64}
+    ess::Float64
 end
 
-# FIX: will sometimes result in bad covariance matrices
-function randomWalk(θ::Particles,c::Float64=0.5)
-    M = length(θ.x)
-    x = reduce(hcat,θ.x)
+function reweight!(smc::DensityTemperedSMC)
+    smc.iteration += 1
+
+    lower_bound = oldξ = smc.ξ
+    upper_bound = 2.0
+
+    local ess,newξ,logw
+
+    while upper_bound-lower_bound > 1.e-6
+        newξ = (upper_bound+lower_bound)/2.0
+
+        logw = (newξ-oldξ)*smc.logZ
+        logw = logw.-maximum(logw)
+
+        w = exp.(logw)
+        w = w/sum(w)
+
+        ess = 1.0/sum(w.^2)
+
+        if ess == smc.B
+            break
+        elseif ess < smc.B
+            upper_bound = newξ
+        else
+            lower_bound = newξ
+        end
+    end
+
+    if newξ ≥ 1.0
+        newξ = 1.0
+
+        logw = (newξ-oldξ)*smc.logZ
+        logw = logw.-maximum(logw)
+    end
+
+    smc.ess = ess
+    smc.ξ = newξ
+
+    # take the log of the normalized weights to reduce numerical problems
+    w = exp.(logw)
+    smc.w = w/sum(w)
+    smc.logw = log.(smc.w)
+end
+
+function resample!(smc::DensityTemperedSMC)
+    a = wsample(1:smc.M,smc.w,smc.M)
+
+    smc.θ = smc.θ[:,a]
+    smc.logZ = smc.logZ[a]
+end
+
+function rejuvinate!(smc::DensityTemperedSMC,c::Float64,len_chain::Int64=5)
+    println("rejuvinating particles")
+    θ = smc.θ
 
     # calculate the weighted mean and covariance
-    μ = vec(mean(x,weights(θ.w),2))
-    Σ = cov(x,weights(θ.w),2)
+    μ = vec(mean(θ,weights(smc.w),2))
+    Σ = cov(θ,weights(smc.w),2)
 
     # finish this to generate a particle set
-    newθ = rand(MvNormal(μ,c*Σ),M)
-
-    # this is wrong, but present for testing purposes
+    newθ = rand(MvNormal(μ,c*Σ),smc.M)
     newθ[3:4,:] = abs.(newθ[3:4,:])
 
-    return Particles([newθ[:,m] for m in 1:M])
-end
-
-# this is totally untested, but the logic is 100% there
-function randomWalkMH(
-        θ::Particles,model,N::Int64,y::Vector{Float64},pθ::Sampleable,ξ::Float64;
-        B::Float64=0.5,c::Float64=0.5,len_chain::Int64=3
-    )
-
-    M = length(θ)
-    acc = zeros(Int64,M)
-
     for _ in 1:len_chain
-        newθ = randomWalk(θ,c)
+        u = rand(smc.M)
+        for m in 1:smc.M
+            Θm = StateSpaceModel(smc.model(newθ[:,m]...))
+            newXm = bootstrapFilter(smc.N,smc.y,Θm)
+            logZm = sum([Xmt.logμ for Xmt in newXm.p])
 
-        # can be parallelized
-        for m in 1:M
-            newΘm = StateSpaceModel(model(newθ.x[m]...))
-            newXm = bootstrapFilter(N,y,newΘm,B)
-            newθ.logw[m] = sum([Xmt.logμ for Xmt in newXm.p])
+            αm = smc.ξ*(logZm-smc.logZ[m])
+            αm += (logpdf(smc.prior,smc.θ[:,m])-logpdf(smc.prior,newθ[:,m]))
+            αm = exp(αm)
 
-            αm = ξ*newθ.logw[m]-θ.logw[m]
-            αm += (logpdf(pθ,θ.x[m])-logpdf(pθ,newθ.x[m]))
-
-            if rand() ≤ minimum([αm,1.0])
-                θ.x[m] = newθ.x[m]
-
-                # not sure how to set this weight
-                θ.logw[m] = 0.0
-                acc[m] = 1
+            if u[m] ≤ minimum([αm,1.0])
+                smc.θ[:,m] = newθ[:,m]
+                smc.logZ[m] = logZm
             end
         end
     end
-
-    acc_rate = mean(acc) / M
-    println(acc_rate)
-
-    # re-normalize everything
-    return Particles(θ.x,θ.logw)
 end
 
 function densityTemperedSMC(
-        N::Int64,
         M::Int64,
-        y::Vector{Float64},
-        θ0::Vector{Float64},
+        N::Int64,
+        y::AbstractVector,
         prior::Function,
-        B::Float64 = 0.5,
-        model = LinearGaussian
+        θ0::Vector{Float64},
+        model::Function,
+        threshold::Float64 = 0.5
     )
+    iter = 0
 
-    k = length(θ0)
-    ξ = 1.e-12
+    # consider restructuring θ
+    pθ = prior(θ0,Matrix{Float64}(I(length(θ0))))
+    θ  = rand(pθ,M)
 
-    # initialize particles
-    pθ = prior(θ0,Matrix{Float64}(I,k,k))
-    θ = rand(pθ,M)
-    θ = Particles([θ[:,m] for m in 1:M])
-
-    # parallelize this
+    # consider rewriting this method
+    logZ = zeros(Float64,M)
     for m in 1:M
-        Θm = StateSpaceModel(model(θ.x[m]...))
+        Θm = StateSpaceModel(model(θ[:,m]...))
         Xm = bootstrapFilter(N,y,Θm)
-        θ.logw[m] = sum([Xmt.logμ for Xmt in Xm.p])
+        logZ[m] = sum([Xmt.logμ for Xmt in Xm.p])
     end
 
-    while ξ < 1.0
-        # find exponent ξ, reweight, and resample
-        newξ = gridSearch(ξ,θ,B)
-        θ = reweight(θ,[(newξ-ξ)*θ.logw[m] for m in 1:M])
+    logw = fill(-1*log(M),M)
+    w    = fill(1/M,M)
+    ess  = M
 
-        if θ.ess < B*M
-            println("resampling...")
-            θ = resample(θ)
-            θ = randomWalkMH(θ,model,N,y,pθ,newξ)
+    ξ0 = 1.e-12
+    B  = threshold*M
+
+    # initialize the algorithm
+    smc = DensityTemperedSMC(M,N,iter,y,pθ,model,ξ0,B,logZ,θ,logw,w,ess)
+
+    while smc.ξ < 1.0
+        reweight!(smc)
+
+        if smc.ess < B
+            resample!(smc)
+            rejuvinate!(smc,0.5)
         end
 
-        println(newξ)
-        ξ = newξ
+        println("ξ = ",smc.ξ)
     end
 
-    return θ
+    return smc.θ
 end
