@@ -1,6 +1,6 @@
 module SequentialMonteCarlo
 
-using Distributions,LinearAlgebra,StatsBase,Statistics
+using Distributions,LinearAlgebra,StatsBase,Statistics,Printf
 
 import StatsBase:  cov,mean,params,mode,median
 import Statistics: cov,mean,quantile,median
