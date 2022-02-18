@@ -15,7 +15,7 @@ mutable struct DensityTemperedSMC
     logZ::Vector{Float64}
 
     # particle characteristics
-    θ::Matrix{Float64}
+    θ::Vector{Vector{Float64}}
     logw::Vector{Float64}
     w::Vector{Float64}
     ess::Float64
@@ -68,13 +68,13 @@ end
 function resample!(smc::DensityTemperedSMC)
     a = wsample(1:smc.M,smc.w,smc.M)
 
-    smc.θ = smc.θ[:,a]
+    smc.θ = smc.θ[a]
     smc.logZ = smc.logZ[a]
 end
 
 function rejuvinate!(smc::DensityTemperedSMC,c::Float64,len_chain::Int64=5)
-    println("rejuvinating particles")
-    θ = smc.θ
+    println("rejuvenating...")
+    θ = reduce(hcat,smc.θ)
 
     # calculate the weighted mean and covariance
     μ = vec(mean(θ,weights(smc.w),2))
@@ -85,17 +85,18 @@ function rejuvinate!(smc::DensityTemperedSMC,c::Float64,len_chain::Int64=5)
     newθ[3:4,:] = abs.(newθ[3:4,:])
 
     for _ in 1:len_chain
-        u = log.(rand(smc.M))
+        u = rand(smc.M)
         for m in 1:smc.M
             Θm = StateSpaceModel(smc.model(newθ[:,m]...))
             newXm = bootstrapFilter(smc.N,smc.y,Θm)
             logZm = sum([Xmt.logμ for Xmt in newXm.p])
 
             αm = smc.ξ*(logZm-smc.logZ[m])
-            αm += (logpdf(smc.prior,smc.θ[:,m])-logpdf(smc.prior,newθ[:,m]))
+            αm += (logpdf(smc.prior,smc.θ[m])-logpdf(smc.prior,newθ[:,m]))
+            αm = exp(αm)
 
             if u[m] ≤ minimum([αm,1.0])
-                smc.θ[:,m] = newθ[:,m]
+                smc.θ[m] = newθ[:,m]
                 smc.logZ[m] = logZm
             end
         end
@@ -116,11 +117,12 @@ function densityTemperedSMC(
     # consider restructuring θ
     pθ = prior(θ0,Matrix{Float64}(I(length(θ0))))
     θ  = rand(pθ,M)
+    θ  = [θ[:,m] for m in 1:M]
 
     # consider rewriting this method
     logZ = zeros(Float64,M)
     for m in 1:M
-        Θm = StateSpaceModel(model(θ[:,m]...))
+        Θm = StateSpaceModel(model(θ[m]...))
         Xm = bootstrapFilter(N,y,Θm)
         logZ[m] = sum([Xmt.logμ for Xmt in Xm.p])
     end
@@ -143,8 +145,8 @@ function densityTemperedSMC(
             rejuvinate!(smc,0.5)
         end
 
-        println("ξ = ",smc.ξ)
+        println(smc.ξ)
     end
 
-    return smc.θ
+    return smc.θ,smc.w
 end

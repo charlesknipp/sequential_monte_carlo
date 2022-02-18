@@ -8,7 +8,8 @@ test_model  = StateSpaceModel(test_params)
 x,y = simulate(test_model,50)
 
 prior(μ,Σ) = TruncatedMvNormal(μ,Σ,[-1.0,-1.0,0.0,0.0],[1.0,1.0,Inf,Inf])
-θ = densityTemperedSMC(100,1000,y,[0.7,0.7,1.0,1.0],prior)
+linGauss(A,B,Q,R) = LinearGaussian(A,B,Q,R)
 
-mean(reduce(hcat,θ.x),weights(θ.w),2)
-mean(reduce(hcat,θ.x),dims=2)
+θ,w = densityTemperedSMC(100,100,y,prior,[0.3,-0.4,1.0,1.0],linGauss)
+
+mean(reduce(hcat,θ),dims=2)
