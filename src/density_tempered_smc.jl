@@ -85,7 +85,7 @@ function rejuvinate!(smc::DensityTemperedSMC,c::Float64,len_chain::Int64=5)
     newθ[3:4,:] = abs.(newθ[3:4,:])
 
     for _ in 1:len_chain
-        u = rand(smc.M)
+        u = log.(rand(smc.M))
         for m in 1:smc.M
             Θm = StateSpaceModel(smc.model(newθ[:,m]...))
             newXm = bootstrapFilter(smc.N,smc.y,Θm)
@@ -93,7 +93,6 @@ function rejuvinate!(smc::DensityTemperedSMC,c::Float64,len_chain::Int64=5)
 
             αm = smc.ξ*(logZm-smc.logZ[m])
             αm += (logpdf(smc.prior,smc.θ[:,m])-logpdf(smc.prior,newθ[:,m]))
-            αm = exp(αm)
 
             if u[m] ≤ minimum([αm,1.0])
                 smc.θ[:,m] = newθ[:,m]
