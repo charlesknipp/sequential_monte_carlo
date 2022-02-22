@@ -76,7 +76,7 @@ function ESS(logx::Vector{Float64})
     return ESS
 end
 
-function resample(p::Particles,B::Number=Inf)
+function resample(p::Particles,B::Number)
     N = length(p.x)
 
     if p.ess < B*N

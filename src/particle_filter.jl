@@ -11,11 +11,13 @@ function bootstrapFilter(
 
     # initialize algorithm
     ps = ParticleSet(N,prior.dim_x,T)
+    logZ = zeros(Float64,T)
 
     # in the case where x0 is located at the origin
     x0 = (prior.dim_x == 1) ? 0.0 : zeros(Float64,prior.dim_x)
     p0 = Particles(rand(prior.transition(x0),N))
 
+    logZ[1] = p0.logμ
     ps.p[1] = resample(p0,B)
 
     for t in 2:T
@@ -24,11 +26,13 @@ function bootstrapFilter(
 
         ## for higher dimensions of x
         # xt = [xt[:,i] for i in 1:size(xt,2)]
-        wt += ps.p[t-1].logw
-        ps.p[t] = resample(Particles(xt,wt),B)
+        pt = Particles(xt,wt)
+
+        logZ[t] = pt.logμ
+        ps.p[t] = resample(pt,B)
     end
 
-    return ps
+    return logZ
 end
 
 # this might work, but I'm not sure and not inclined to benchmark
@@ -124,11 +128,15 @@ function kalmanFilter(y::Vector{Float64},model::LinearGaussian)
     x[1] = 0.0
     Σ[1] = 1.0
 
+    logZ = zeros(Float64,T)
+
     for t in 1:T
         # calculate the Kalman gain
         Σxy = Σ[t]*(model.B)'
         Σyy = (model.B)*Σ[t]*(model.B)'+(model.R)
         gain = Σxy*inv(Σyy)
+
+        logZ[t] = logpdf(Normal(model.B*x[t],Σyy),y[t])
         
         # calculate minimally variant x[t+1] and propogate
         xf = x[t] + gain*(y[t]-(model.B)*x[t])
@@ -138,8 +146,8 @@ function kalmanFilter(y::Vector{Float64},model::LinearGaussian)
         Σf = Σ[t] - gain*(model.B)*Σ[t]
         Σ[t+1] = (model.A)*Σf*(model.A)' + model.Q
 
-        qs[t,:] = quantile(Normal(xf,sqrt(Σf)),[.25,.50,.75])
+        qs[t,:] = quantile(Normal(xf,Σf),[.25,.50,.75])
     end
 
-    return qs
+    return qs,logZ
 end
