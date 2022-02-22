@@ -32,7 +32,7 @@ function bootstrapFilter(
         ps.p[t] = resample(pt,B)
     end
 
-    return logZ
+    return ps,logZ
 end
 
 # this might work, but I'm not sure and not inclined to benchmark
