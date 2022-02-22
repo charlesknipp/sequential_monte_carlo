@@ -93,7 +93,6 @@ function bootstrapStep(
 
         # weight based on the likelihood of observation
         wt = logpdf.(Θ[m].observation.(xt),y[t])
-        wt += Xt.p[m].logw
 
         # create a particle system with appropriate weights
         Xt.p[m] = Particles(xt,wt)
