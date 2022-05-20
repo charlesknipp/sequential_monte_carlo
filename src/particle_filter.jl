@@ -1,153 +1,151 @@
-export bootstrapFilter,kalmanFilter
+struct ParticleFilter{ST} <: AbstractFilter
+    model::StateSpaceModel
+    state::ST
 
-# this works, but could honestly perform a little better
-function bootstrapFilter(
-        N::Int64,
-        y::Vector{Float64},
-        prior::StateSpaceModel,
-        B::Number = 0.5
-    )
-    T = length(y)
-
-    # initialize algorithm
-    ps = ParticleSet(N,prior.dim_x,T)
-    logZ = zeros(Float64,T)
-
-    # in the case where x0 is located at the origin
-    x0 = (prior.dim_x == 1) ? 0.0 : zeros(Float64,prior.dim_x)
-    p0 = Particles(rand(prior.transition(x0),N))
-
-    logZ[1] = p0.logμ
-    ps.p[1] = resample(p0,B)
-
-    for t in 2:T
-        xt = rand.(prior.transition.(ps.p[t-1].x))
-        wt = logpdf.(prior.observation.(xt),y[t])
-
-        ## for higher dimensions of x
-        # xt = [xt[:,i] for i in 1:size(xt,2)]
-        pt = Particles(xt,wt)
-
-        logZ[t] = pt.logμ
-        ps.p[t] = resample(pt,B)
-    end
-
-    return ps,logZ
+    resample_threshold::Float64
+    rng::AbstractRNG
 end
 
-# this might work, but I'm not sure and not inclined to benchmark
-function auxiliaryParticleFilter(
-        N::Int64,
-        y::Vector{Float64},
-        prior::StateSpaceModel,
-        auxiliary::Function = mean,
-        B::Number = 0.5,
-        proposal = nothing
-    )
-    T = length(y)
+function ParticleFilter(N::Integer,model,B=0.1,rng=Random.GLOBAL_RNG)
+    mod_type = eltype(model.initial_dist)
+    dim_x = length(model.initial_dist)
 
-    if proposal === nothing
-        proposal = prior
-    end
+    xprev = Vector{SVector{dim_x,mod_type}}([rand(rng,model.initial_dist) for n=1:N])
+    x = deepcopy(xprev)
 
-    # aux must be a function of a distribution
-    aux(x) = auxiliary(prior.transition(x))
+    logw = fill(-1*log(N),N)
+    w = fill(1/N,N)
 
-    # initialize algorithm
-    ps  = ParticleSet(N,prior.dim_x,T)
+    s = Particles(x,xprev,logw,w,Ref(0.),collect(1:N),Ref(1))
 
-    # in the case where x0 is located at the origin
-    x0 = (prior.dim_x == 1) ? 0.0 : zeros(Float64,prior.dim_x)
-    p0 = Particles(rand(proposal.transition(x0),N))
+    return ParticleFilter(model,s,B,rng)
+end
 
-    ps.p[1] = resample(p0,B)
 
-    for t in 2:T
-        # first stage weights
-        wt1 = logpdf.(prior.observation(aux.(ps.p[t-1].x)))
-        xt1 = resample(reweight(ps.p[t-1].x,wt1),B)
+Base.@propagate_inbounds function reweight!(pf::ParticleFilter,y)
+    logw = pf.state.logw
+    dist = pf.model.observation
+    any(ismissing,y) && return logw
 
-        xt2 = rand.(proposal.transition.(xt1))
-        wt2 = logpdf.(prior.observation.(xt1),y[t])
-
-        # simplify calculations if the proposal is not provided
-        if !(proposal === nothing)
-            wt2 += logpdf.(prior.transition.(ps.p[t-1].x),xt)
-            wt2 -= logpdf.(proposal.transition.(ps.p[t-1].x),xt)
+    if dist isa UnivariateDistribution && length(y) == 1
+        for i = 1:length(pf.state)
+            # not sure if logw += logpdf(⋅) or logw = logpdf(⋅)
+            logw[i] = logpdf(dist(pf.state.x[i][1]),y[1])
         end
-
-        ## for higher dimensions of x
-        # xt = [xt[:,i] for i in 1:size(xt,2)]
-        wt2 += ps.p[t-1].logw
-        ps.p[t] = resample(Particles(xt2,wt2),B)
+    else
+        for i = 1:length(pf.state)
+            # not sure if logw += logpdf(⋅) or logw = logpdf(⋅)
+            logw[i] = logpdf(dist(pf.state.x[i]),y)
+        end
     end
 
-    return ps
+    return logw
 end
 
+# normalizes weights and updates particle cloud (too complicated)
+function logsumexp!(logw,w,maxw=Ref(zero(eltype(logw))))::eltype(logw)
+    offset,maxind = findmax(logw)
+    logw .-= offset
 
-"""
-    kalmanFilter(y,model)
+    # normalize new weights
+    LoopVectorization.vmap!(exp,w,logw)
+    sumw   = sum_all_but(w,maxind)
+    w    .*= 1/(sumw+1)
+    logw .-= log1p(sumw)
 
-Let x be normally a distributed AR process and y be a function of x.
-Suppose we observe y, thus we use a Kalman filter to predict x.
-More specifically, predict x using the following DLM...
+    # adjusted maximum log weight
+    maxw[] += offset
 
-* y[t]   = B*x[t] + δ   s.t. δ ~ N(0,R)
-* x[t+1] = A*x[t] + ϵ   s.t. ϵ ~ N(0,Q)
+    return log1p(sumw) + maxw[] - log(length(logw))
+end
 
-```
-model = NDLM(1.0,1.0,1.0,1.0)
-x,y = simulate(100,model)
-```
-```julia-repl
-> kalmanFilter(y,model)
-100×3 Array{Float64,2}:
-  -0.47693    0.00000    0.47694
-  -0.41495    0.09382    0.60258
-  -1.17056   -0.65821   -0.14586
-  -0.94360   -0.43084    0.08192
-   ⋮
-  -1.49669   -0.98388   -0.47107
-  -2.06760   -1.55479   -1.04198
-  -0.84181   -0.32899    0.18382
-```
+@inline logsumexp!(p) = logsumexp!(p.logw,p.w,p.maxw)
+@inline logsumexp!(pf::AbstractFilter) = logsumexp!(pf.state)
 
-Note: this model only works for 1 dimensional arrays, or vectors of x,
-but has the capability to expand to multiple dimensions.
 
-"""
-function kalmanFilter(y::Vector{Float64},model::LinearGaussian)
-    T = length(y)
+# resampling required
+Base.@propagate_inbounds function propagate!(pf::ParticleFilter,a::Vector{Int})
+    s = pf.state
+    transition = pf.model.transition
+    x,xp = s.x,s.xprev
 
-    x = zeros(Float64,T+1,model.dim_x)
-    Σ = zeros(Float64,T+1,model.dim_x)
-    
-    qs = zeros(Float64,T,3)
+    vec_type = eltype(x)
+    d_dims   = length(vec_type)
+    xprop    = zeros(d_dims)
 
-    x[1] = 0.0
-    Σ[1] = 1.0
-
-    logZ = zeros(Float64,T)
-
-    for t in 1:T
-        # calculate the Kalman gain
-        Σxy = Σ[t]*(model.B)'
-        Σyy = (model.B)*Σ[t]*(model.B)'+(model.R)
-        gain = Σxy*inv(Σyy)
-
-        logZ[t] = logpdf(Normal(model.B*x[t],Σyy),y[t])
-        
-        # calculate minimally variant x[t+1] and propogate
-        xf = x[t] + gain*(y[t]-(model.B)*x[t])
-        x[t+1] = (model.A)*xf
-        
-        # calculate covariance and propogate
-        Σf = Σ[t] - gain*(model.B)*Σ[t]
-        Σ[t+1] = (model.A)*Σf*(model.A)' + model.Q
-
-        qs[t,:] = quantile(Normal(xf,Σf),[.25,.50,.75])
+    for i = eachindex(x)
+        x[i] = vec_type(rand!(pf.rng,transition(xp[a[i]]),xprop))
     end
 
-    return qs,logZ
+    return x
+end
+
+# no need for resampling
+Base.@propagate_inbounds function propagate!(pf::ParticleFilter)
+    s = pf.state
+    transition = pf.model.transition
+    x,xp = s.x,s.xprev
+
+    vec_type = eltype(x)
+    d_dims   = length(vec_type)
+    xprop    = zeros(d_dims)
+
+    for i = eachindex(x)
+        x[i] = vec_type(rand!(pf.rng,transition(xp[i]),xprop))
+    end
+
+    return x
+end
+
+index(pf::AbstractFilter) = pf.state.t[]
+
+
+function correct!(pf,y)
+    # calculates log weights
+    reweight!(pf,y)
+
+    # normalizes weights and finds the likelihood
+    ll = logsumexp!(pf.state)
+
+    return ll
+end
+
+function predict!(pf)
+    particles = pf.state
+    N = length(particles)
+
+    # rethink this in terms of particle types/filter types
+    if ESS(particles) < pf.resample_threshold*N
+        a = wsample(pf.rng,1:N,particles.w,N)
+        propagate!(pf,a)
+        reset_weights!(particles)
+    else # Resample not needed
+        particles.a .= 1:N
+        propagate!(pf)
+    end
+
+    # move forward in time
+    copyto!(particles.xprev,particles.x)
+    pf.state.t[] += 1
+end
+
+function update!(pf::AbstractFilter,y)
+    ll = correct!(pf,y)
+    predict!(pf)
+
+    return ll
+end
+
+function reset!(pf::AbstractFilter)
+    particles = pf.state
+
+    for i = eachindex(particles.xprev)
+        particles.xprev[i] = rand(pf.rng,pf.model.initial_dist)
+        particles.x[i] = copy(particles.xprev[i])
+    end
+
+    fill!(particles.logw,-log(length(particles)))
+    fill!(particles.w,1/length(particles))
+
+    pf.state.t[] = 1
 end
