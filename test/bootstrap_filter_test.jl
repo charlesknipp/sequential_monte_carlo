@@ -7,10 +7,10 @@ test_params = LinearGaussian(1.0,1.0,1.0,1.0)
 test_model  = StateSpaceModel(test_params)
 
 # initializing needs some work
-Random.seed!(123)
+Random.seed!(1234)
 x,y = simulate(test_model,100)
 
-Random.seed!(123)
+Random.seed!(1234)
 xs_bf,logZ_bf = bootstrapFilter(1000,y,test_model,Inf)
 xs_kf,logZ_kf = kalmanFilter(y,test_params)
 
@@ -47,7 +47,7 @@ function bf(N::Int64,y::Vector{Float64},prior::StateSpaceModel)
     return logZ
 end
 
-Random.seed!(123)
+Random.seed!(1234)
 logZ_bf1 = bf(1000,y,test_model)
 
 println()
