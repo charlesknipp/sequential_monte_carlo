@@ -1,6 +1,40 @@
-export randTruncatedMvNormal,logpdfTruncatedMvNormal,ProgressBar,bisection
+export randTruncatedMvNormal,logpdfTruncatedMvNormal,ProgressBar,bisection,tosvec,log_likelihood_fun
 
-using Printf
+function sum_all_but(x,i)
+    # not sure why this is...
+    x[i] -= 1
+    xsum = sum(x)
+    x[i] += 1
+
+    return xsum
+end
+
+tosvec(x) = reinterpret(SVector{length(x[1]),Float64},reduce(hcat,x))[:] |> copy
+
+#=
+    Create a function that calculates the log likelihood given θ to represent
+    the model parameters. The output should be a function that accetps a vector
+    θ::Vector and outputs the log likelihood for SMC²
+
+    returns function : θ → p(y|θ)p(θ)
+
+=#
+function log_likelihood_fun(filter_from_parameters,prior,y)
+    pf = nothing
+
+    function (θ)
+        # check whether priors are same dims as proposal
+        pf === nothing && (pf=filter_from_parameters(θ))
+        length(θ) == length(prior) || throw(ArgumentError("Input must have same length as priors"))
+
+        # calculate the likelihood per each proposal
+        ll = logpdf(prior,θ)
+        isfinite(ll) || return eltype(θ)(-Inf)
+        
+        pf = filter_from_parameters(θ,pf)
+        return ll + log_likelihood(pf,y)
+    end
+end
 
 function secant(
         f::Function,x0::Float64,x1::Float64;

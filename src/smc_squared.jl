@@ -1,160 +1,136 @@
-export SMC2
-
-# FIX: will sometimes result in bad covariance matrices
-function randomWalk(θ::Particles,kernel::Function,c::Float64=0.5)
-    M = length(θ.x)
-    x = reduce(hcat,θ.x)
-
-    # calculate the weighted mean and covariance
-    μ = vec(mean(x,weights(θ.w),2))
-    Σ = cov(x,weights(θ.w),2)
-
-    # finish this to generate a particle set
-    pθ = kernel(μ,c*Σ)
-    newθ = rand(pθ,M)
-
-    return Particles([newθ[:,m] for m in 1:M]),pθ
-end
-
-# FIX: this is the most inefficient step in the entire process
-function randomWalkMH(
-        t::Int64,
-        θ::Particles,
-        Xt::ParticleSet,
-        y::Vector{Float64},
-        N::Int64,
-        prior::Function,
-        model,
-        B::Float64,
-        c::Float64=0.5,
-        chain::Int64=10
-    )
-
-    # consider whether I should do this per particle or over the whole set
-    M = length(θ.x)
-
-    for _ in 1:chain
-        newθ,pθ = randomWalk(θ,prior,c)
-        newΘ = [StateSpaceModel(model(newθ.x[m]...)) for m in 1:M]
-
-        # perform another PF from 1:t and OPTIMIZE THIS
-        x0 = (newΘ[1].dim_x == 1) ? 0.0 : zeros(Float64,newΘ[1].dim_x)
-        newXt = [Particles(rand(newΘ[m].transition(x0),N)) for m in 1:M]
-        newXt = ParticleSet(newXt)
-
-        for k in 1:t
-            newXt = bootstrapStep(k,newΘ,y,newXt,B)
-            newwt = newθ.logw + [newXt.p[m].logμ for m in 1:M]
-            newθ  = Particles(newθ.x,newwt)
-        end
-
-        # Z(θ) ≡ likelihood, p(θ) ≡ pdf of prior
-        logZt = [Xt.p[m].logμ-newXt.p[m].logμ for m in 1:M]
-        logpt = [logpdf(pθ,θ.x[m])-logpdf(pθ,newθ.x[m]) for m in 1:M]
-
-        # acceptance ratio
-        α = exp.(logZt+logpt)
-        u = rand(M)
-
-        particles   = θ.x
-        log_weights = θ.logw
-
-        for m in 1:M
-            if u[m] ≤ minimum([α[m],1.0])
-                # resample particle and set the weight w[m] ↤ 1
-                particles[m]   = newθ.x[m]
-                log_weights[m] = 0.0
-
-                Xt.p[m] = newXt.p[m]
-            end
-        end
-
-        θ = Particles(particles,log_weights)
-    end
-
-    return θ,Xt
-end
-
-# this works surprisingly well
-function bootstrapStep(
-        t::Int64,
-        Θ::Vector{StateSpaceModel},
-        y::Vector{Float64},
-        Xt::ParticleSet,
-        B::Float64
-    )
-    M = length(Xt)
-
-    # could parallelize
-    for m in 1:M
-        # resample the previous state and propogate forward
-        xt = resample(Xt.p[m],B)
-        xt = rand.(Θ[m].transition.(xt.x))
-
-        # weight based on the likelihood of observation
-        wt = logpdf.(Θ[m].observation.(xt),y[t])
-
-        # create a particle system with appropriate weights
-        Xt.p[m] = Particles(xt,wt)
-    end
-
-    return Xt
-end
-
-# Base function for SMC² which takes a Particles object as input
-function SMC2(
-        N::Int64,
-        M::Int64,
-        y::Vector{Float64},
-        θ::Particles,
-        prior::Function,
-        B::Float64 = 0.5,
-        model = LinearGaussian
-    )
-    T = length(y)
-    
-    Θ  = [StateSpaceModel(model(θ.x[m]...)) for m in 1:M]
-    x0 = (Θ[1].dim_x == 1) ? 0.0 : zeros(Float64,Θ[1].dim_x)
-    Xt = ParticleSet([Particles(rand(Θ[m].transition(x0),N)) for m in 1:M])
-
-    # perform iteration t of the bootstrap filter and reweight θ particles
-    for t in ProgressBar(1:T)
-        # resample with a random walk MH kernel to avoid degeneracy
-        if θ.ess < B*M
-            θ,Xt = randomWalkMH(t,θ,Xt,y,N,prior,model,0.5,0.8,3)
-        end
-
-        # propogate forward and reweight
-        Xt = bootstrapStep(t,Θ,y,Xt,B)
-        wt = θ.logw + [Xt.p[m].logμ for m in 1:M]
-        θ  = Particles(θ.x,wt)
-    end
-
-    return θ,Xt
-end
-
-# this is a wrapper given a guess for the initial state θ_0
-function SMC2(
-        N::Int64,
-        M::Int64,
-        y::Vector{Float64},
-        θ0::Vector{Float64},
-        prior::Function,
-        B::Float64 = 0.5,
-        model = LinearGaussian
-    )
-    k = length(θ0)
-
-    θ0 = rand(prior(θ0,Matrix{Float64}(I,k,k)),M)
-    θ0 = Particles([θ0[:,m] for m in 1:M])
-
-    return SMC2(N,M,y,θ0,prior,B,model)
-end
+export SMC²,reset!,random_walk,metropolis,rejuvenate!,update_importance!,reset!
 
 #=
-IDEA 1: consider changing Base.iterate for particles such that the filter will
-    run at each iteration, and no waste is stored in between iterations
+    SMC² is still a work in progress, but it is well on its way to completion.
+    The current object keeps track of the particle objects and uses a function
+    defined at each iteration to calculate the likelihood for each θ particle.
 
-IDEA 2: create an object type for SMC² that stores exogenous characteristics of
-    the algorithm (number of θ particles, number of X particles, model, etc)
+    log_likelihood_fun() constructs this logZ function and performs it at each
+    step to weight each particle. It is not a perfect implementation, but it is
+    less intrusive and stores less in memory than before. This is also more
+    flexible and easier to debug than before.
+
+    Its implementation is incomplete so there is no working example, but you can
+    look at test/smc_squared_test.jl to see how it works for one step forward in
+    time.
 =#
+
+struct SMC²{ΘT,PΘ,SSM,K}
+    params::ΘT
+    prior::PΘ
+    model::SSM
+    mcmc_kernel::K
+
+    N::Int
+    chain_len::Int
+
+    resample_threshold::Float64
+    rng::AbstractRNG
+end
+
+# default constructor, which establishes the algorithm at t=0
+function SMC²(M::Int,N::Int,θ0,prior,model,B,chain_len,rng=Random.GLOBAL_RNG)
+    mod_type = eltype(prior(θ0))
+    dimθ = length(prior(θ0))
+
+    θprev = Vector{SVector{dimθ,mod_type}}([rand(rng,prior(θ0)) for m=1:M])
+    θ = deepcopy(θprev)
+
+    logw = fill(-log(M),M)
+    w = fill(1/M,M)
+
+    θ  = Particles(θ,θprev,logw,w,Ref(0.),collect(1:M),Ref(1))
+    pθ = random_walk(θ)
+
+    return SMC²(θ,prior(θ0),model,pθ,N,chain_len,B,rng)
+end
+
+# random walk kernel which makes the likelihood ratio an easier computation
+function random_walk(θ0::Particles)
+    x = reduce(hcat,θ0.x)
+
+    μ = vec(mean(x,weights(θ0.w),2))
+    Σ = cov(x,weights(θ0.w),2)
+
+    # returns a function that takes a vector θ
+    return rand(MvNormal(μ,0.1*Σ))
+end
+
+# expand to work for θ particles
+function metropolis(logprob,chain_len,θ0,mcmc_kernel)
+    # here logprob is the smc kernel: logZ(θ[m]) + logpdf(p(θ0),θ[m])
+    θ  = Vector{typeof(θ0.x)}(undef,chain_len)
+    ll = Vector{Float64}(undef,chain_len)
+
+    θ[1]  = θ0.x
+    ll[1] = logprob(θ0)
+
+    # MH process, relatively easy to follow
+    for i = 2:chain_len
+        θi = mcmc_kernel(θ[i-1])
+        lli = logprob(θi)
+        if rand() < exp(lli-ll[i-1])
+            θ[i] = θi
+            ll[i] = lli
+        else
+            θ[i] = θ[i-1]
+            ll[i] = ll[i-1]
+        end
+    end
+
+    return θ[chain_len]
+end
+
+# rejuvenation by way of MH steps
+function rejuvenate!(smc²::SMC²,logprob)
+    θ = smc².params
+
+    for i = eachindex(smc².params.x)
+        θ.x[i] = metropolis(logprob,smc².chain_len,θ.x[i],smc².mcmc_kernel)
+    end
+end
+
+@inline normalize!(smc²::SMC²) = normalize!(smc².params)
+
+# this is defines a single step t of the algorithm
+function update_importance!(smc²::SMC²,y)
+    # define a bootstrap filter with the new set of particles
+    function bootstrap_filter(θ,pf=nothing)
+        mod = smc².model(θ)
+        return ParticleFilter(smc².N,mod)
+    end
+
+    # define the likelihood calculation by the above bootstrap filter
+    θ = smc².params
+    logZ = log_likelihood_fun(bootstrap_filter,smc².prior,y[1:θ.t[]])
+
+    # reweight by adding the log likelihood to each log weight
+    for i in eachindex(θ.x)
+        smc².params.logw[i] += logZ(θ.x[i])
+    end
+
+    # normalize parameter weights
+    normalize!(smc²)
+
+    # resample step
+    if ESS(smc².params) < smc².resample_threshold*length(θ)
+        smc².mcmc_kernel = random_walk(θ)
+        rejuvenate!(smc²,bootstrap_filter)
+        reset_weights!(smc².params)
+    end
+end
+
+# reset after running it T times
+function reset!(smc²::SMC²)
+    θ = smc².params
+
+    for i = eachindex(θ.xprev)
+        θ.xprev[i] = rand(smc².rng,smc².prior)
+        θ.x[i] = copy(θ.xprev[i])
+    end
+
+    fill!(θ.logw,-log(length(θ)))
+    fill!(θ.w,1/length(θ))
+
+    pf.state.t[] = 1
+end

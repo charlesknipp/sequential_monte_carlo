@@ -1,71 +1,27 @@
 include(joinpath(pwd(),"src/sequential_monte_carlo.jl"))
 
 using .SequentialMonteCarlo
-using Printf,Random,Distributions
+using Printf,Random,Distributions,LinearAlgebra,StaticArrays
 
-test_params = LinearGaussian(1.0,1.0,1.0,1.0)
-test_model  = StateSpaceModel(test_params)
+test_model = LinearGaussian(
+    Matrix(1.0I(1)),Matrix(1.0I(1)),
+    Matrix(1.0I(1)),Matrix(1.0I(1)),
+    zeros(1),Matrix(1.0I(1))
+)
 
-# initializing needs some work
-Random.seed!(1234)
-x,y = simulate(test_model,100)
+ssm_test = StateSpaceModel(test_model)
 
-Random.seed!(1234)
-xs_bf,logZ_bf = bootstrapFilter(1000,y,test_model,Inf)
-xs_kf,logZ_kf = kalmanFilter(y,test_params)
+pf_test = ParticleFilter(1000,ssm_test,0.8,MersenneTwister(1234))
+x_test,y_test = simulate(MersenneTwister(1234),ssm_test,100)
 
-for t in 1:100
-    println(@sprintf("logZ_bf: %.5f\tlogZ_kf: %.5f",logZ_bf[t],logZ_kf[t]))
+log_likelihood(pf_test,y_test)
+
+using StatsBase
+
+reset!(pf_test)
+for t = eachindex(y_test)
+    update!(pf_test,y_test[t])
+    xt = reduce(hcat,pf_test.state.x)
+    x_mean = mean(xt,weights(pf_test.state.w),2)
+    println(@sprintf("simulated: %.5f\tfiltered: %.5f",x_test[t][1],x_mean[1]))
 end
-
-
-using BenchmarkTools
-
-# rewritten bootstrap method, slightly faster (emphasis on slightly)
-function bf(N::Int64,y::Vector{Float64},prior::StateSpaceModel)
-    T = length(y)
-
-    # initialize algorithm
-    logZ = zeros(Float64,T)
-
-    # in the case where x0 is located at the origin
-    x0 = (prior.dim_x == 1) ? 0.0 : zeros(Float64,prior.dim_x)
-    p0 = Particles(rand(prior.transition(x0),N))
-
-    logZ[1] = p0.logμ
-    ps = resample(p0)
-
-    for t in 2:T
-        xt = rand.(prior.transition.(ps.x))
-        wt = logpdf.(prior.observation.(xt),y[t])
-        pt = Particles(xt,wt)
-
-        logZ[t] = pt.logμ
-        ps = resample(pt)
-    end
-
-    return logZ
-end
-
-Random.seed!(1234)
-logZ_bf1 = bf(1000,y,test_model)
-
-println()
-for t in 1:100
-    println(@sprintf("logZ_bf: %.5f\tlogZ_bf1: %.5f",logZ_bf[t],logZ_bf1[t]))
-end
-
-function timebf1()
-    Random.seed!(123)
-    _,logZ = bootstrapFilter(1000,y,test_model,Inf)
-    return logZ
-end
-
-function timebf2()
-    Random.seed!(123)
-    logZ = bf(1000,y,test_model)
-    return logZ
-end
-
-@benchmark timebf1()
-@benchmark timebf2()

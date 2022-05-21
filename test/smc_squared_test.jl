@@ -3,24 +3,40 @@ include(joinpath(pwd(),"src/sequential_monte_carlo.jl"))
 using .SequentialMonteCarlo
 using Printf,Random,Distributions,LinearAlgebra,StatsBase
 
+# toy model definition A = 0.6 amd B = 0.8
+test_model = LinearGaussian(
+    Matrix(0.6I(1)),Matrix(0.8I(1)),
+    Matrix(1.0I(1)),Matrix(1.0I(1)),
+    zeros(1),Matrix(1.0I(1))
+)
 
-# simulate data
-test_params = LinearGaussian(0.8,0.5,1.0,1.0)
-test_model  = StateSpaceModel(test_params)
-x,y = simulate(test_model,50)
+ssm_test = StateSpaceModel(test_model)
+x_test,y_test = simulate(MersenneTwister(1234),ssm_test,100)
 
-# construct a prior distribution
-prior(μ,Σ) = TruncatedMvNormal(μ,Σ,[-1.0,-1.0,0.0,0.0],[1.0,1.0,Inf,Inf])
-θ0 = [0.7,0.7,1.0,1.0]
 
-θ,Xt = SMC2(20,100,y,θ0,prior,0.5,LinearGaussian)
+# define the constructor for that toy model
+model(θ) = StateSpaceModel(LinearGaussian(
+    Matrix(θ[1]I(1)),Matrix(θ[2]I(1)),
+    Matrix(exp(θ[3])I(1)),Matrix(exp(θ[4])I(1)),
+    zeros(1),Matrix(1.0I(1))
+))
 
-mean(reduce(hcat,θ.x),weights(θ.w),2)
+θ1 = [
+    Matrix(0.8I(1)),Matrix(0.5I(1)),
+    Matrix(1.0I(1)),Matrix(1.0I(1))
+]
 
-# [println(Xtm.logμ) for Xtm in Xt.p]
+θ1 = [0.8,0.5,1.0,1.0]
 
-#=
-    The output looks as it should, but the weights that are generated are not
-    what they seem. The algorithm spits out an evenly weighted particle cloud
-    which should not be the case
-=#
+# finish the prior formatting/structure
+prior_func(θ) = product_distribution([
+    TruncatedNormal(θ[1],1.0,-1.0,1.0),
+    TruncatedNormal(θ[2],1.0,-1.0,1.0),
+    Normal(0.0,2.0),
+    Normal(0.0,2.0)
+])
+
+# ALMOST DONE!!! Run this with the debugger to check the distribution being constructed
+
+smc2 = SMC²(20,100,θ1,prior_func,model,0.1,2)
+update_importance!(smc2,y_test[1])

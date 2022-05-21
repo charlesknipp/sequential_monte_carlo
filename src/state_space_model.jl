@@ -3,87 +3,52 @@ export StateSpaceModel,LinearGaussian,simulate,ModelParameters,AbstractSSM
 abstract type AbstractSSM end
 abstract type ModelParameters end
 
-struct StateSpaceModel <: AbstractSSM
+struct StateSpaceModel{F,G,F0} <: AbstractSSM
     # define general structure using functions
-    transition::Function
-    observation::Function
-    
-    # need the dims for initializing states...maybe...
-    dim_x::Int64
-    dim_y::Int64
+    transition::F
+    observation::G
+    initial_dist::F0
 end
 
+struct LinearGaussian{T<:Real} <: ModelParameters
+    A::Matrix{T}
+    B::Matrix{T}
 
-# for now assume x0 and Σ0 are known
-struct LinearGaussian <: ModelParameters
+    Q::Matrix{T}
+    R::Matrix{T}
 
-    A::Union{Float64,Matrix{Float64}}
-    B::Union{Float64,Matrix{Float64}}
-
-    Q::Union{Float64,Matrix{Float64}}
-    R::Union{Float64,Matrix{Float64}}
-
-    # implicitly defined by the constructor
-    dim_x::Int64
-    dim_y::Int64
-
-    function LinearGaussian(A,B,Q,R)
-        # determine the dimensions
-        dim_x,dim_y = size(A,1),size(B,1)
-
-        @assert dim_x == size(A,2) "A is not a square matrix"
-
-        @assert size(Q,1) == size(Q,2) "Q is not a square matrix"
-        @assert size(R,1) == size(R,2) "R is not a square matrix"
-
-        @assert dim_x == size(Q,1) "A,Q dimension mismatch"
-        @assert dim_y == size(R,1) "B,R dimension mismatch"
-
-        @assert issymmetric(Q) "Q is not symmetric"
-        @assert issymmetric(R) "R is not symmetric"
-
-        @assert isposdef(Q) "Q is not positive definite"
-        @assert isposdef(R) "R is not positive definite"
-
-        # construct the new object
-        new(A,B,Q,R,dim_x,dim_y)
-    end
+    μ0::Array{T}
+    Σ0::Matrix{T}
 end
-
 
 function StateSpaceModel(params::LinearGaussian)
     # import parameters
     A,B = params.A,params.B
     Q,R = params.Q,params.R
 
-    dim_x = params.dim_x
-    dim_y = params.dim_y
+    f(xt) = MvNormal(A*xt,Q)
+    g(xt) = MvNormal(B*xt,R)
 
-    # depending on the type of input set the kernel
-    Kx = (dim_x == 1) ? Normal : MvNormal
-    Ky = (dim_y == 1) ? Normal : MvNormal
+    f0 = MvNormal(params.μ0,params.Σ0)
 
-    f(xt) = Kx(A*xt,Q)
-    g(xt) = Ky(B*xt,R)
-
-    return StateSpaceModel(f,g,dim_x,dim_y)
+    return StateSpaceModel(f,g,f0)
 end
 
 
-function simulate(model::StateSpaceModel,T::Int64)
-    y = (model.dim_y == 1) ? 0.0 : zeros(Float64,model.dim_y)
-    y = fill(y,T)
-    
-    x = (model.dim_x == 1) ? 0.0 : zeros(Float64,model.dim_x)
-    x = fill(x,T)
+function simulate(rng::AbstractRNG,mod::StateSpaceModel,T::Int)
+    x = Vector{Vector{Float64}}(undef,T)
+    y = similar(x)
 
-    # initialize for x0
-    x[1] = rand(model.transition(x[1]))
+    x[1] = rand(rng,mod.initial_dist)
 
-    for t in 2:T
-        x[t] = rand(model.transition(x[t-1]))
-        y[t] = rand(model.observation(x[t]))
+    for t = 1:T-1
+        y[t] = rand(rng,mod.observation(x[t]))
+        x[t+1] = rand(rng,mod.transition(x[t]))
     end
 
-    return (x,y)
+    y[T] = rand(rng,mod.observation(x[T]))
+    return x,y
 end
+
+dims(mod::LinearGaussian) = (size(mod.A,1),size(mod.B,1))
+simulate(mod::StateSpaceModel,T::Int) = simulate(Random.GLOBAL_RNG,mod,T)
