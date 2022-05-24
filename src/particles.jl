@@ -71,4 +71,4 @@ function normalize!(logw,w,maxw=Ref(zero(eltype(logw))))::eltype(logw)
     return log1p(sumw) + maxw[] - log(length(logw))
 end
 
-@inline normalize!(p) = logsumexp!(p.logw,p.w,p.maxw)
+@inline normalize!(p) = normalize!(p.logw,p.w,p.maxw)
