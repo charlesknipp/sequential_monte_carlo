@@ -38,5 +38,15 @@ prior_func(θ) = product_distribution([
 
 # ALMOST DONE!!! Run this with the debugger to check the distribution being constructed
 
-smc2 = SMC²(20,100,θ1,prior_func,model,0.1,2)
-update_importance!(smc2,y_test[1])
+smc2 = SMC²(100,200,θ1,prior_func,model,0.5,5)
+#reset!(smc2)
+
+ω = zeros(Float64,100)
+logω = zeros(Float64,100)
+
+for t in 1:100
+    #println(findmax(smc2.params.logw))
+    global ω = smc2.params.w
+    global logω = smc2.params.logw
+    update_importance!(smc2,y_test[1:t]) 
+end

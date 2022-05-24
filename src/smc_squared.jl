@@ -15,11 +15,10 @@ export SMC²,reset!,random_walk,metropolis,rejuvenate!,update_importance!,reset!
     time.
 =#
 
-struct SMC²{ΘT,PΘ,SSM,K}
+struct SMC²{ΘT,PΘ,SSM}
     params::ΘT
     prior::PΘ
     model::SSM
-    mcmc_kernel::K
 
     N::Int
     chain_len::Int
@@ -36,13 +35,12 @@ function SMC²(M::Int,N::Int,θ0,prior,model,B,chain_len,rng=Random.GLOBAL_RNG)
     θprev = Vector{SVector{dimθ,mod_type}}([rand(rng,prior(θ0)) for m=1:M])
     θ = deepcopy(θprev)
 
-    logw = fill(-log(M),M)
-    w = fill(1/M,M)
+    logw = fill(0.0,M)
+    w = fill(1.0,M)
 
     θ  = Particles(θ,θprev,logw,w,Ref(0.),collect(1:M),Ref(1))
-    pθ = random_walk(θ)
 
-    return SMC²(θ,prior(θ0),model,pθ,N,chain_len,B,rng)
+    return SMC²(θ,prior(θ0),model,N,chain_len,B,rng)
 end
 
 # random walk kernel which makes the likelihood ratio an easier computation
@@ -53,21 +51,21 @@ function random_walk(θ0::Particles)
     Σ = cov(x,weights(θ0.w),2)
 
     # returns a function that takes a vector θ
-    return rand(MvNormal(μ,0.1*Σ))
+    return MvNormal(μ,0.5*Σ)
 end
 
 # expand to work for θ particles
 function metropolis(logprob,chain_len,θ0,mcmc_kernel)
     # here logprob is the smc kernel: logZ(θ[m]) + logpdf(p(θ0),θ[m])
-    θ  = Vector{typeof(θ0.x)}(undef,chain_len)
+    θ  = Vector{typeof(θ0)}(undef,chain_len)
     ll = Vector{Float64}(undef,chain_len)
 
-    θ[1]  = θ0.x
+    θ[1]  = θ0
     ll[1] = logprob(θ0)
 
     # MH process, relatively easy to follow
     for i = 2:chain_len
-        θi = mcmc_kernel(θ[i-1])
+        θi = rand(mcmc_kernel)
         lli = logprob(θi)
         if rand() < exp(lli-ll[i-1])
             θ[i] = θi
@@ -81,13 +79,33 @@ function metropolis(logprob,chain_len,θ0,mcmc_kernel)
     return θ[chain_len]
 end
 
+function resample!(smc²::SMC²)
+    θ = smc².params
+    a = wsample(smc².rng,1:length(θ),θ.w,length(θ))
+
+    for i = eachindex(θ.x)
+        θ.x[i] = θ.xprev[a[i]]
+    end
+
+    return θ.x
+end
+
 # rejuvenation by way of MH steps
 function rejuvenate!(smc²::SMC²,logprob)
     θ = smc².params
+    mcmc_kernel = random_walk(smc².params)
 
-    for i = eachindex(smc².params.x)
-        θ.x[i] = metropolis(logprob,smc².chain_len,θ.x[i],smc².mcmc_kernel)
+    for i = eachindex(θ.x)
+        θ.x[i] = metropolis(logprob,smc².chain_len,θ.xprev[i],mcmc_kernel)
     end
+
+    return θ.x
+end
+
+function reset_weights!(smc²::SMC²)
+    fill!(smc².params.logw,0.0)
+    fill!(smc².params.w,1.0)
+    smc².params.maxw[] = 0.0
 end
 
 @inline normalize!(smc²::SMC²) = normalize!(smc².params)
@@ -106,18 +124,27 @@ function update_importance!(smc²::SMC²,y)
 
     # reweight by adding the log likelihood to each log weight
     for i in eachindex(θ.x)
-        smc².params.logw[i] += logZ(θ.x[i])
+        smc².params.logw[i] += logZ(smc².params.x[i])
     end
 
-    # normalize parameter weights
+    # calculate the ESS for each time t
     normalize!(smc²)
+    ess = sum(smc².params.w)^2 / sum(abs2,smc².params.w)
 
     # resample step
-    if ESS(smc².params) < smc².resample_threshold*length(θ)
-        smc².mcmc_kernel = random_walk(θ)
-        rejuvenate!(smc²,bootstrap_filter)
-        reset_weights!(smc².params)
+    if ess < smc².resample_threshold*length(θ)
+        println(ess,"\t[rejuvenating]")
+
+        resample!(smc²)
+        rejuvenate!(smc²,logZ)
+
+        reset_weights!(smc²)
+    else
+        println(ess)
     end
+
+    copyto!(smc².params.xprev,smc².params.x)
+    θ.t[] += 1
 end
 
 # reset after running it T times
@@ -129,8 +156,8 @@ function reset!(smc²::SMC²)
         θ.x[i] = copy(θ.xprev[i])
     end
 
-    fill!(θ.logw,-log(length(θ)))
-    fill!(θ.w,1/length(θ))
+    fill!(θ.logw,0.0)
+    fill!(θ.w,1.0)
 
-    pf.state.t[] = 1
+    smc².params.t[] = 1
 end
