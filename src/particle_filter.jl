@@ -15,7 +15,7 @@ abstract type AbstractFilter end
 =#
 
 # create a particle fitler object with a model, state, and rng
-struct ParticleFilter{ST} <: AbstractFilter
+struct ParticleFilter <: AbstractFilter
     model::StateSpaceModel
     state::Particles
 
@@ -24,7 +24,7 @@ struct ParticleFilter{ST} <: AbstractFilter
 end
 
 # default constructor given number of particles N, resample threshold B, and rng
-function ParticleFilter(N::Integer,model,B=0.1,rng=Random.GLOBAL_RNG)
+function ParticleFilter(N::Int,model,B=0.1,rng=Random.GLOBAL_RNG)
     mod_type = eltype(model.initial_dist)
     dim_x = length(model.initial_dist)
 
@@ -153,5 +153,5 @@ end
 function log_likelihood(pf::AbstractFilter,y)
     reset!(pf)
     # should encase y in a tuple; see https://github.com/baggepinnen/LowLevelParticleFilters.jl/blob/master/src/smoothing.jl#L86
-    return sum(x -> update!(pf,x),[y])
+    return sum(x -> update!(pf,x),y)
 end
