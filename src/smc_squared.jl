@@ -113,7 +113,7 @@ function rejuvenate!(smc²::SMC²,logprob)
         total_acc += acc
     end
 
-    print("\t acc ratio: ",total_acc/length(θ),"\n")
+    print("\t acc ratio: ",total_acc/length(θ))
 
     return θ.x
 end
@@ -149,14 +149,14 @@ function update_importance!(smc²::SMC²,y)
 
     # resample step
     if ess < smc².resample_threshold*length(θ)
-        @printf("ess = %3.5f\t[rejuvenating]",ess)
+        @printf("\nt = %4d\tess = %3.5f\t[rejuvenating]",θ.t[],ess)
 
         resample!(smc²)
-        rejuvenate!(smc²,logZ)
+        #rejuvenate!(smc²,logZ)
 
         reset_weights!(smc²)
     else
-        @printf("ess = %3.5f\n",ess)
+        @printf("\nt = %4d\tess = %3.5f",θ.t[],ess)
     end
 
     copyto!(smc².params.xprev,smc².params.x)
