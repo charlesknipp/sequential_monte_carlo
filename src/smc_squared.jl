@@ -59,6 +59,7 @@ function naive_random_walk(θ0)
 
     # returns a function that takes a vector θ
     return θ -> MvNormal(θ,dθ*I(length(θ0)))
+end
 
 # takes a single particle as it's argument [does not work]
 function metropolis(logprob,chain_len,θ0,mcmc_kernel)
