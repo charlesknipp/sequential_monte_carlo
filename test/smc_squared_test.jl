@@ -21,14 +21,19 @@ model(θ) = StateSpaceModel(LinearGaussian(
     zeros(1),Matrix(1.0I(1))
 ))
 
-θ1 = [
-    Matrix(0.8I(1)),Matrix(0.5I(1)),
-    Matrix(1.0I(1)),Matrix(1.0I(1))
-]
+
+## NOTE: eventually accept a list of lists for θ, right now it does not work,
+##       but it should be relatively easy to implement once the alg is tested
+##
+## θ1 = [
+##     Matrix(0.8I(1)),Matrix(0.5I(1)),
+##     Matrix(1.0I(1)),Matrix(1.0I(1))
+## ]
+
 
 θ1 = [0.8,0.5,1.0,1.0]
 
-# finish the prior formatting/structure
+# prior works relatively well
 prior_func(θ) = product_distribution([
     TruncatedNormal(θ[1],1.0,-1.0,1.0),
     TruncatedNormal(θ[2],1.0,-1.0,1.0),
@@ -36,17 +41,13 @@ prior_func(θ) = product_distribution([
     Normal(0.0,2.0)
 ])
 
-# ALMOST DONE!!! Run this with the debugger to check the distribution being constructed
 
 smc2 = SMC²(100,200,θ1,prior_func,model,0.5,5)
-#reset!(smc2)
 
-ω = zeros(Float64,100)
-logω = zeros(Float64,100)
-
+# to run the algorithm perform the following:
 for t in 1:100
-    #println(findmax(smc2.params.logw))
-    global ω = smc2.params.w
-    global logω = smc2.params.logw
     update_importance!(smc2,y_test[1:t]) 
 end
+
+# reset after the algorithm is finished running
+reset!(smc2)
