@@ -1,5 +1,20 @@
 export TruncatedMvNormal
 
+# add support for static vectors in Distributions.jl
+@inline Base.:(-)(x::StaticArray,::Distributions.Zeros) = x
+@inline Base.:(-)(::Distributions.Zeros,x::StaticArray) = -x
+
+@inline Base.:(\)(a::PDMats.PDMat,x::StaticVector) = a.chol\x
+
+@inline PDMats.invquad(a::PDMats.ScalMat,x::StaticVector)  = dot(x,x)/a.value
+@inline PDMats.invquad(a::PDMats.PDMat,x::StaticVector)    = dot(x,a\x)
+@inline PDMats.invquad(a::PDMats.PDiagMat,x::StaticVector) = PDMats.wsumsq(1 ./ a.diag,x)
+@inline Distributions.sqmahal(d::MvNormal,x::StaticArray)  = Distributions.invquad(d.Σ,x-d.μ)
+
+@generated function Distributions._logpdf(d::Product,x::StaticVector{N}{<:Real}) where N
+    :(Base.Cartesian.@ncall $N Base.:+ i->logpdf(d.v[i],x[i]))
+end
+
 struct TruncatedMvNormal{T<:Real,Cov<:AbstractMatrix{T},Mean<:AbstractVector{T}} <: ContinuousMultivariateDistribution
     # distribution parameters
     μ::Mean
