@@ -43,18 +43,24 @@ function SMC²(M::Int,N::Int,θ0,prior,model,B,chain_len,rng=Random.GLOBAL_RNG)
     return SMC²(θ,prior(θ0),model,N,chain_len,B,rng)
 end
 
-# random walk kernel which makes the likelihood ratio an easier computation
+# random walk kernel using the covariance of the particle set
 function random_walk(θ0::Particles)
-    x = reduce(hcat,θ0.x)
-
-    μ = vec(mean(x,weights(θ0.w),2))
-    Σ = cov(x,weights(θ0.w),2)
+    x  = reduce(hcat,θ0.x)
+    Σ  = cov(x,weights(θ0.w),2)
+    dθ = (2.38)^2 / length(θ0.x[1])     # optimal scaling parameter
 
     # returns a function that takes a vector θ
-    return MvNormal(μ,0.5*Σ)
+    return θ -> MvNormal(θ,dθ*Σ)
 end
 
-# expand to work for θ particles
+# naive random walk which just uses an identity matrix as covariance
+function naive_random_walk(θ0)
+    dθ = (2.38)^2 / length(θ0.x[1])     # optimal scaling parameter
+
+    # returns a function that takes a vector θ
+    return θ -> MvNormal(θ,dθ*I(length(θ0)))
+
+# takes a single particle as it's argument [does not work]
 function metropolis(logprob,chain_len,θ0,mcmc_kernel)
     # here logprob is the smc kernel: logZ(θ[m]) + logpdf(p(θ0),θ[m])
     θ  = Vector{typeof(θ0)}(undef,chain_len)
@@ -65,7 +71,7 @@ function metropolis(logprob,chain_len,θ0,mcmc_kernel)
 
     # MH process, relatively easy to follow
     for i = 2:chain_len
-        θi = rand(mcmc_kernel)
+        θi = rand(mcmc_kernel(θ[i-1]))
         lli = logprob(θi)
         if rand() < exp(lli-ll[i-1])
             θ[i] = θi
@@ -79,6 +85,7 @@ function metropolis(logprob,chain_len,θ0,mcmc_kernel)
     return θ[chain_len]
 end
 
+# resample parameter particles
 function resample!(smc²::SMC²)
     θ = smc².params
     a = wsample(smc².rng,1:length(θ),θ.w,length(θ))
@@ -90,10 +97,11 @@ function resample!(smc²::SMC²)
     return θ.x
 end
 
-# rejuvenation by way of MH steps
+# rejuvenation by way of MH steps [does not work]
 function rejuvenate!(smc²::SMC²,logprob)
     θ = smc².params
-    mcmc_kernel = random_walk(smc².params)
+    #mcmc_kernel = random_walk(smc².params)
+    mcmc_kernel = naive_random_walk(θ.x[1])
 
     for i = eachindex(θ.x)
         θ.x[i] = metropolis(logprob,smc².chain_len,θ.xprev[i],mcmc_kernel)
