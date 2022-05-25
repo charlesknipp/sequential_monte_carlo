@@ -10,7 +10,7 @@ test_model = LinearGaussian(
     zeros(1),Matrix(1.0I(1))
 )
 
-T = 50
+T = 100
 ssm_test = StateSpaceModel(test_model)
 x_test,y_test = simulate(MersenneTwister(1234),ssm_test,T)
 
@@ -44,7 +44,7 @@ prior_func(θ) = product_distribution([
 ])
 
 # initialize the algorithm at t=0
-smc2 = SMC²(100,200,θ1,prior_func,model,0.8,5)
+smc2 = SMC²(200,500,θ1,prior_func,model,0.8,3)
 
 # to run the algorithm perform the following:
 for t in 1:T
