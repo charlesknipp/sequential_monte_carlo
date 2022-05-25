@@ -10,6 +10,7 @@ struct StateSpaceModel{F,G,F0} <: AbstractSSM
     initial_dist::F0
 end
 
+# add static array construction...this is pretty rough
 struct LinearGaussian{T<:Real} <: ModelParameters
     A::Matrix{T}
     B::Matrix{T}
