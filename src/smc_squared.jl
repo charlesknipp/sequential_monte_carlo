@@ -55,14 +55,14 @@ end
 
 # naive random walk which just uses an identity matrix as covariance
 function naive_random_walk(θ0)
-    dθ = (2.38)^2 / length(θ0.x[1])     # optimal scaling parameter
+    dθ = 2.38 / sqrt(length(θ0.x[1]))   # optimal scaling parameter
 
     # returns a function that takes a vector θ
     return θ -> MvNormal(θ,dθ*I(length(θ0)))
 end
 
 # takes a single particle as it's argument [does not work]
-function metropolis(logprob,chain_len,θ0,mcmc_kernel)
+function metropolis(logprob,chain_len,θ0,mcmc_kernel,rng)
     # here logprob is the smc kernel: logZ(θ[m]) + logpdf(p(θ0),θ[m])
     θ  = Vector{typeof(θ0)}(undef,chain_len)
     ll = Vector{Float64}(undef,chain_len)
@@ -70,20 +70,23 @@ function metropolis(logprob,chain_len,θ0,mcmc_kernel)
     θ[1]  = θ0
     ll[1] = logprob(θ0)
 
+    acc = 0
+
     # MH process, relatively easy to follow
     for i = 2:chain_len
-        θi = rand(mcmc_kernel(θ[i-1]))
+        θi = rand(rng,mcmc_kernel(θ[i-1]))
         lli = logprob(θi)
-        if rand() < exp(lli-ll[i-1])
+        if rand(rng) ≤ exp(lli-ll[i-1])
             θ[i] = θi
             ll[i] = lli
+            acc = 1
         else
             θ[i] = θ[i-1]
             ll[i] = ll[i-1]
         end
     end
 
-    return θ[chain_len]
+    return θ[chain_len],acc
 end
 
 # resample parameter particles
@@ -103,10 +106,14 @@ function rejuvenate!(smc²::SMC²,logprob)
     θ = smc².params
     #mcmc_kernel = random_walk(smc².params)
     mcmc_kernel = naive_random_walk(θ.x[1])
+    total_acc = 0
 
     for i = eachindex(θ.x)
-        θ.x[i] = metropolis(logprob,smc².chain_len,θ.xprev[i],mcmc_kernel)
+        θ.x[i],acc = metropolis(logprob,smc².chain_len,θ.x[i],mcmc_kernel,smc².rng)
+        total_acc += acc
     end
+
+    print("\t acc ratio: ",total_acc/length(θ),"\n")
 
     return θ.x
 end
@@ -124,12 +131,12 @@ function update_importance!(smc²::SMC²,y)
     # define a bootstrap filter with the new set of particles
     function bootstrap_filter(θ,pf=nothing)
         mod = smc².model(θ)
-        return ParticleFilter(smc².N,mod)
+        return ParticleFilter(smc².N,mod,1.0,smc².rng)
     end
 
     # define the likelihood calculation by the above bootstrap filter
     θ = smc².params
-    logZ = log_likelihood_fun(bootstrap_filter,smc².prior,y[1:θ.t[]])
+    logZ = log_likelihood_fun(bootstrap_filter,smc².prior,y)
 
     # reweight by adding the log likelihood to each log weight
     for i in eachindex(θ.x)
@@ -142,14 +149,14 @@ function update_importance!(smc²::SMC²,y)
 
     # resample step
     if ess < smc².resample_threshold*length(θ)
-        println(ess,"\t[rejuvenating]")
+        @printf("ess = %3.5f\t[rejuvenating]",ess)
 
         resample!(smc²)
         rejuvenate!(smc²,logZ)
 
         reset_weights!(smc²)
     else
-        println(ess)
+        @printf("ess = %3.5f\n",ess)
     end
 
     copyto!(smc².params.xprev,smc².params.x)
