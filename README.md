@@ -87,6 +87,6 @@ This work in progress algorithm was inspired by the paper of the same name by J.
 
 ### SMC²
 
-As the algorithm's creater describes it, SMC² is "an efficient algorithm for sequential analysis of state space models". The eponymous paper by N. Chopin outlines these efficiencies by considering iterative batch sampling (IBIS) in conjuction with Monte Carlo methods which transform the analytical intractibility of IBIS into a very feasible, yet memory efficient algorithm. This program defines the function `SMC²()` to represent Chopin's idea.
+As the algorithm's creater describes it, SMC² is "an efficient algorithm for sequential analysis of state space models". The eponymous paper by N. Chopin outlines these efficiencies by considering iterative batch sampling (IBIS) in conjuction with Monte Carlo methods which transform the analytical intractibility of IBIS into a very feasible, yet memory efficient algorithm.
 
-Like the previous algorithm, this is still a work in progress.
+This implementation of Chopin's algortihm is a work in progress. The linear gaussian simulation given `θ = [0.6,0.8,1.0,1.0]` generated `T = 100` periods and ran SMC² with 200 state particles and 500 parameter particles. The output of the work-in-progress algorithm was `θ = [0.66,0.35,3.67,1.28]`; an estimate that nails the first element, but misses the mark elsewhere.

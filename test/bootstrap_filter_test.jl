@@ -11,8 +11,8 @@ test_model = LinearGaussian(
 
 ssm_test = StateSpaceModel(test_model)
 
-pf_test = ParticleFilter(1000,ssm_test,0.8,MersenneTwister(1234))
-x_test,y_test = simulate(MersenneTwister(1234),ssm_test,100)
+pf_test = ParticleFilter(100,ssm_test,0.8,MersenneTwister(1234))
+x_test,y_test = simulate(MersenneTwister(1234),ssm_test,10)
 
 log_likelihood(pf_test,y_test)
 

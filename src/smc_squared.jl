@@ -5,18 +5,21 @@ export SMC²,reset!,random_walk,metropolis,rejuvenate!,update_importance!,reset!
     The current object keeps track of the particle objects and uses a function
     defined at each iteration to calculate the likelihood for each θ particle.
 
-    log_likelihood_fun() constructs this logZ function and performs it at each
-    step to weight each particle. It is not a perfect implementation, but it is
-    less intrusive and stores less in memory than before. This is also more
-    flexible and easier to debug than before.
+    The main iteration is performed via update_importance!(...) which is an
+    in-place function to update the parameters of an SMC² object. Speaking of,
+    SMC² objects track parameter particles and their associated particle fil-
+    ters; this is what allows the algorithm to really fly in terms of speed.
 
-    Its implementation is incomplete so there is no working example, but you can
-    look at test/smc_squared_test.jl to see how it works for one step forward in
-    time.
+    This still needs some work, specifically on the MCMC aspect; acceptance is
+    far too low and declines exponentially with time. The causes are yet to be
+    identified, but a solution will present itself in due time.
 =#
 
-struct SMC²{ΘT,PΘ,SSM}
+struct SMC²{ΘT,XT,PΘ,SSM}
     params::ΘT
+    filters::XT
+    likelihoods::Vector{Float64}
+
     prior::PΘ
     model::SSM
 
@@ -28,65 +31,43 @@ struct SMC²{ΘT,PΘ,SSM}
 end
 
 # default constructor, which establishes the algorithm at t=0
-function SMC²(M::Int,N::Int,θ0,prior,model,B,chain_len,rng=Random.GLOBAL_RNG)
-    mod_type = eltype(prior(θ0))
-    dimθ = length(prior(θ0))
+function SMC²(M::Int,N::Int,prior,model,B,chain_len,rng=Random.GLOBAL_RNG)
+    # establish parameter particles
+    mod_type = eltype(prior)
+    dimθ = length(prior)
 
-    θprev = Vector{SVector{dimθ,mod_type}}([rand(rng,prior(θ0)) for m=1:M])
+    θprev = Vector{SVector{dimθ,mod_type}}([rand(rng,prior) for m=1:M])
     θ = deepcopy(θprev)
 
     logw = fill(0.0,M)
     w = fill(1.0,M)
 
-    θ  = Particles(θ,θprev,logw,w,Ref(0.),collect(1:M),Ref(1))
+    θ = Particles(θ,θprev,logw,w,Ref(0.),collect(1:M),Ref(1))
+    
+    # for each parameter particle establish state particles
+    pf = [ParticleFilter(N,model(θ.x[i]),Inf,rng) for i in 1:M]
 
-    return SMC²(θ,prior(θ0),model,N,chain_len,B,rng)
+    return SMC²(θ,pf,zeros(Float64,M),prior,model,N,chain_len,B,rng)
 end
 
 # random walk kernel using the covariance of the particle set
-function random_walk(θ0::Particles)
+function random_walk(θ0)
     x  = reduce(hcat,θ0.x)
-    Σ  = cov(x,weights(θ0.w),2)
-    dθ = (2.38)^2 / length(θ0.x[1])     # optimal scaling parameter
+    dθ = (2.38)^2 / length(θ0.x[1])
+
+    # whacky covariance is for numerical stability
+    Σ = norm(cov(x')) < 1e-12 ? 1e-2*I : dθ*cov(x') + 1e-10*I
 
     # returns a function that takes a vector θ
-    return θ -> MvNormal(θ,dθ*Σ)
+    return θ -> MvNormal(θ,Σ)
 end
 
 # naive random walk which just uses an identity matrix as covariance
 function naive_random_walk(θ0)
-    dθ = 2.38 / sqrt(length(θ0.x[1]))   # optimal scaling parameter
+    dθ = (2.38)^2 / sqrt(length(θ0.x[1]))
 
     # returns a function that takes a vector θ
     return θ -> MvNormal(θ,dθ*I(length(θ0)))
-end
-
-# takes a single particle as it's argument [does not work]
-function metropolis(logprob,chain_len,θ0,mcmc_kernel,rng)
-    # here logprob is the smc kernel: logZ(θ[m]) + logpdf(p(θ0),θ[m])
-    θ  = Vector{typeof(θ0)}(undef,chain_len)
-    ll = Vector{Float64}(undef,chain_len)
-
-    θ[1]  = θ0
-    ll[1] = logprob(θ0)
-
-    acc = 0
-
-    # MH process, relatively easy to follow
-    for i = 2:chain_len
-        θi = rand(rng,mcmc_kernel(θ[i-1]))
-        lli = logprob(θi)
-        if rand(rng) ≤ exp(lli-ll[i-1])
-            θ[i] = θi
-            ll[i] = lli
-            acc = 1
-        else
-            θ[i] = θ[i-1]
-            ll[i] = ll[i-1]
-        end
-    end
-
-    return θ[chain_len],acc
 end
 
 # resample parameter particles
@@ -94,28 +75,65 @@ function resample!(smc²::SMC²)
     θ = smc².params
     a = wsample(smc².rng,1:length(θ),θ.w,length(θ))
 
+    filters = deepcopy(smc².filters)
+    probabilities = deepcopy(smc².likelihoods)
+
+    # this does not reindex the weights!!!
     for i = eachindex(θ.x)
-        θ.x[i] = θ.xprev[a[i]]
+        smc².params.x[i]    = θ.xprev[a[i]]
+        smc².filters[i]     = filters[a[i]]
+        smc².likelihoods[i] = probabilities[a[i]]
     end
 
-    return θ.x
+    ## won't work since Particles are immutable
+    #  smc².params.w = smc².params.w[a]
+
+    #smc².filters     .= smc².filters[a]
+    #smc².likelihoods .= smc².likelihoods[a]
+
+    return smc².params.x,smc².filters,smc².likelihoods
 end
 
-# rejuvenation by way of MH steps [does not work]
-function rejuvenate!(smc²::SMC²,logprob)
-    θ = smc².params
-    #mcmc_kernel = random_walk(smc².params)
-    mcmc_kernel = naive_random_walk(θ.x[1])
-    total_acc = 0
+# rejuvenation by way of metropolis hastings
+function rejuvenate!(smc²::SMC²,y)
+    acc_rate = 0
+    mcmc_kernel = random_walk(smc².params)
 
-    for i = eachindex(θ.x)
-        θ.x[i],acc = metropolis(logprob,smc².chain_len,θ.x[i],mcmc_kernel,smc².rng)
-        total_acc += acc
+    # function to construct a pf given vector of parameters
+    filter_params(θ) = ParticleFilter(smc².N,smc².model(θ),Inf,smc².rng)
+
+    # not sure if this writes globally to smc²
+    for i = eachindex(smc².params.x)
+        θ   = smc².params.x[i]
+        ll  = smc².likelihoods[i]
+        pf  = smc².filters[i]
+        
+        for _ in 1:smc².chain_len
+            # get the log likelihood at time t for the newly proposed θ
+            proposal_θ  = rand(smc².rng,mcmc_kernel(θ))
+            proposal_pf = filter_params(proposal_θ)
+            proposal_ll = log_likelihood(proposal_pf,y[1:smc².params.t[]])
+
+            # add the logpdf of prior to the likelihood to get the ratio
+            old_likelihood = logpdf(smc².prior,θ) + ll
+            new_likelihood = logpdf(smc².prior,proposal_θ) + proposal_ll
+
+            #@printf("\n[%2d] old prob: %5.3f\tnew prob: %5.3f",i,ll,proposal_ll)
+
+            if log(rand(smc².rng)) ≤ minimum([1,new_likelihood-old_likelihood])
+                θ  = proposal_θ
+                ll = proposal_ll
+                pf = proposal_pf
+                acc_rate += 1
+
+                #print("\t[accepted]")
+            end
+        end
     end
 
-    print("\t acc ratio: ",total_acc/length(θ))
+    @printf("\t acc rate: %1.4f",acc_rate/(length(smc².params.x)*smc².chain_len))
 
-    return θ.x
+    return smc².params.x
 end
 
 function reset_weights!(smc²::SMC²)
@@ -128,52 +146,57 @@ end
 
 # this is defines a single step t of the algorithm
 function update_importance!(smc²::SMC²,y)
-    # define a bootstrap filter with the new set of particles
-    function bootstrap_filter(θ,pf=nothing)
-        mod = smc².model(θ)
-        return ParticleFilter(smc².N,mod,1.0,smc².rng)
+    # weigh each θ particle
+    for i in eachindex(smc².params.x)
+        ## not sure if I weighted this properly
+        smc².likelihoods[i] += update!(smc².filters[i],y[smc².params.t[]])
+        smc².params.logw[i] += smc².likelihoods[i]
     end
 
-    # define the likelihood calculation by the above bootstrap filter
-    θ = smc².params
-    logZ = log_likelihood_fun(bootstrap_filter,smc².prior,y)
-
-    # reweight by adding the log likelihood to each log weight
-    for i in eachindex(θ.x)
-        smc².params.logw[i] += logZ(smc².params.x[i])
-    end
-
-    # calculate the ESS for each time t
+    # normalize θ weights and calculate the ESS
     normalize!(smc²)
     ess = sum(smc².params.w)^2 / sum(abs2,smc².params.w)
 
     # resample step
-    if ess < smc².resample_threshold*length(θ)
-        @printf("\nt = %4d\tess = %3.5f\t[rejuvenating]",θ.t[],ess)
+    if ess < smc².resample_threshold*length(smc².params.x)
+        # print progress
+        @printf("\nt = %4d\tess = %3.5f\t[rejuvenating]",smc².params.t[],ess)
 
-        resample!(smc²)
-        #rejuvenate!(smc²,logZ)
+        resample!(smc²)     # resample filters, particles, and likelihoods
+        rejuvenate!(smc²,y) # rejuvenate with random walk MH kernel
 
         reset_weights!(smc²)
     else
-        @printf("\nt = %4d\tess = %3.5f",θ.t[],ess)
+        # print progress
+        @printf("\nt = %4d\tess = %3.5f",smc².params.t[],ess)
     end
 
+    # TODO: adaptive resampling?
+
+    # propogate the parameter particles
     copyto!(smc².params.xprev,smc².params.x)
-    θ.t[] += 1
+    smc².params.t[] += 1
 end
 
 # reset after running it T times
 function reset!(smc²::SMC²)
-    θ = smc².params
+    θ  = smc².params
+    l  = smc².likelihoods
+    pf = smc².filters
 
+    # resample from the prior and copy
     for i = eachindex(θ.xprev)
         θ.xprev[i] = rand(smc².rng,smc².prior)
         θ.x[i] = copy(θ.xprev[i])
+
+        # reset the particle filters using new values
+        pf = ParticleFilter(smc².N,smc².model(θ.x[i]),Inf,smc².rng)
     end
 
+    # reset weights and likelihoods
     fill!(θ.logw,0.0)
     fill!(θ.w,1.0)
+    fill!(l,0.0)
 
     smc².params.t[] = 1
 end

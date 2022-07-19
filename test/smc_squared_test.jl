@@ -10,7 +10,7 @@ test_model = LinearGaussian(
     zeros(1),Matrix(1.0I(1))
 )
 
-T = 100
+T = 20
 ssm_test = StateSpaceModel(test_model)
 x_test,y_test = simulate(MersenneTwister(1234),ssm_test,T)
 
@@ -33,26 +33,47 @@ model(θ) = StateSpaceModel(LinearGaussian(
 ## ]
 
 
-θ1 = [0.8,0.5,1.0,1.0]
+#θ1 = [0.8,0.5,1.0,1.0]
 
 # prior works relatively well
-prior_func(θ) = product_distribution([
-    TruncatedNormal(θ[1],1.0,-1.0,1.0),
-    TruncatedNormal(θ[2],1.0,-1.0,1.0),
+prior = product_distribution([
+    TruncatedNormal(0.0,1.0,-1.0,1.0),
+    TruncatedNormal(0.0,1.0,-1.0,1.0),
     Normal(0.0,2.0),
     Normal(0.0,2.0)
 ])
 
 # initialize the algorithm at t=0
-smc2 = SMC²(200,500,θ1,prior_func,model,0.8,3)
+smc2 = SMC²(100,100,prior,model,0.8,3)
 
 # to run the algorithm perform the following:
 for t in 1:T
-    update_importance!(smc2,y_test[1:t]) 
+    #θ_t  = smc2.params
+    #pf_t = smc2.filters
+
+    #show(θ_t.x)
+
+    # [smc2.filters[i].state.t[] for i in 1:100]
+    update_importance!(smc2,y_test)
 end
+
+# test a regular particle filter here
+θ_test = [0.6,0.8,1.0,1.0]
+pf_test = ParticleFilter(100,model(θ_test),Inf,MersenneTwister(1234))
+log_likelihood(pf_test,y_test)
+
+#=
+smc2.params.x
+smc2.likelihood
+update_importance!(smc2,y_test)
+=#
 
 predθ = vec(mean(reduce(hcat,smc2.params.x),weights(smc2.params.w),2))
 predθ[3:4] = exp.(predθ[3:4])
+
+using Plots
+
+# histogram(smc2.params.x)
 
 # reset after the algorithm is finished running
 reset!(smc2)

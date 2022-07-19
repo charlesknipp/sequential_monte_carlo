@@ -41,6 +41,11 @@ function ParticleFilter(N::Int,model,B=0.1,rng=Random.GLOBAL_RNG)
     return ParticleFilter(model,s,B,rng)
 end
 
+# given existing states, construct a new particle filter (for SMC²)
+function ParticleFilter(state::Particles,model,B=0.1,rng=Random.GLOBAL_RNG)
+    return ParticleFilter(model,state,B,rng)
+end
+
 # this exclusively calculates the log weights given an observation y[t]
 Base.@propagate_inbounds function reweight!(pf::ParticleFilter,yt)
     logw = pf.state.logw
@@ -51,11 +56,12 @@ Base.@propagate_inbounds function reweight!(pf::ParticleFilter,yt)
     if dist isa UnivariateDistribution && length(yt) == 1
         # for univariate distributions, yt[1] == unnest(yt)
         for i = 1:length(pf.state)
-            logw[i] = logpdf(dist(pf.state.x[i][1]),yt[1])
+            # not sure if += or just =
+            logw[i] += logpdf(dist(pf.state.x[i][1]),yt[1])
         end
     else
         for i = 1:length(pf.state)
-            logw[i] = logpdf(dist(pf.state.x[i]),yt)
+            logw[i] += logpdf(dist(pf.state.x[i]),yt)
         end
     end
 
