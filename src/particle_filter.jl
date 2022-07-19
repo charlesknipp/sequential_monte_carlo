@@ -57,11 +57,11 @@ Base.@propagate_inbounds function reweight!(pf::ParticleFilter,yt)
         # for univariate distributions, yt[1] == unnest(yt)
         for i = 1:length(pf.state)
             # not sure if += or just =
-            logw[i] += logpdf(dist(pf.state.x[i][1]),yt[1])
+            logw[i] = logpdf(dist(pf.state.x[i][1]),yt[1])
         end
     else
         for i = 1:length(pf.state)
-            logw[i] += logpdf(dist(pf.state.x[i]),yt)
+            logw[i] = logpdf(dist(pf.state.x[i]),yt)
         end
     end
 
