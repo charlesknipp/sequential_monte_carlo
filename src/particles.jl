@@ -1,99 +1,57 @@
-export Particles,reweight,ParticleSet,ESS,resample
+export Particles,reweight!,resample!,particle_type
 
-# try to make the Particles type immutable, which may entail getting rid of the
-# ParticleSet class
+#=
+Particles{T} is a collector which defines a particle set containing Float64s or
+Vector{Float64}. Particles are technically immutable but setting its properties
+to Base.RefValue{Any} allows a user to modify that attribute as a 0 dimensional
+array.
 
-const ParticleType = Union{Float64,Vector{Float64},Vector{Matrix{Float64}}}
+In order to manipulate this object we define the following methods:
+    length(x::Particles)
+    reweight(x::Particles,logw::Vector{Float64})
+    resample(x::Particles)
+=#
 
-mutable struct Particles{T<:ParticleType}
-    # necessary parameters
+struct Particles{T<:Union{Float64,Vector{Float64}}}
     x::Vector{T}
-    logw::Vector{Float64}
+    a::Vector{Int64}
+    t::Base.RefValue{Int64}
 
-    # other parameters, may be inefficient to calculate them at every call
     w::Vector{Float64}
-    ess::Float64
-    logμ::Float64
+    logμ::Base.RefValue{Float64}
+    ess::Base.RefValue{Float64}
 
-    function Particles(x::Vector{T},logw::Vector{Float64}) where T <: ParticleType
-        # account for underflows in weights more thoroughly such that if logw
-        # === NaN then set logw = -Inf
-        maxw = maximum(logw)
-        w    = exp.(logw.-maxw)
-        sumw = sum(w)
+    function Particles{T}(x::Vector{T}) where T <: Union{Float64,Vector{Float64}}
+        N = length(x)
 
-        logμ = maxw + log(sumw/length(logw))
-        w    = w/sumw
-        ess  = 1.0/sum(w.^2)
-        
-        new{T}(x,logw,w,ess,logμ)
+        return new(
+            x,
+            collect(1:N),
+            Ref(1),
+            fill(1/N,N),
+            Ref(-log(N)),
+            Ref(1.0)
+        )
     end
 end
 
-function Particles(particles::Vector{T}) where {T<:ParticleType}
-    N_particles = length(particles)
-    log_weights = fill(-1*log(N_particles),N_particles)
+Base.length(X::Particles) = length(X.w)
 
-    return Particles(particles,log_weights)
+function reweight!(X::Particles,logw::Vector{Float64})
+    maxw = maximum(logw)
+    w    = exp.(logw.-maxw)
+    sumw = sum(w)
+
+    # change the "immutable" struct by RefValue manipulation
+    X.logμ[] = maxw + log(sumw) - log(length(logw))
+    X.w[:]  .= w/sumw
+    X.ess[]  = 1.0/sum(X.w.^2)
+
+    return X.logμ[]
 end
 
-function Particles(N::Int64,dims::Int64=1)
-    particles = (dims == 1) ? fill(0.0,N) : fill(zeros(Float64,dims),N)
-    log_weights = fill(-1*log(N),N)
-
-    return Particles(particles,log_weights)
+function resample!(X::Particles)
+    X.a[:] .= wsample(1:length(X),X.w,length(X))
 end
 
-Base.length(particles::Particles) = length(particles.logw)
-
-function reweight(particles::Particles,log_weights::Vector{Float64})
-    particles = particles.x
-
-    # this returns a new object, which makes mutability of this struct obsolete
-    return Particles(particles,log_weights)
-end
-
-
-mutable struct ParticleSet{T<:ParticleType}
-    p::Vector{Particles{T}}
-end
-
-function ParticleSet(N::Int64,dim::Int64,T::Int64)
-    particle_set = [Particles(N,dim) for _ in 1:T]
-
-    return ParticleSet(particle_set)
-end
-
-Base.length(ps::ParticleSet) = length(ps.p)
-
-function ESS(logx::Vector{Float64})
-    max_logx = maximum(logx)
-    x_scaled = exp.(logx.-max_logx)
-
-    ESS = sum(x_scaled)^2 / sum(x_scaled.^2)
-    if ESS == NaN; ESS = 0.0 end
-
-    return ESS
-end
-
-function resample(p::Particles,B::Number)
-    N = length(p.x)
-
-    if p.ess < B*N
-        a = wsample(1:N,p.w,N)
-        x = p.x[a]
-
-        return Particles(x)
-    else
-        return p
-    end
-end
-
-function resample(p::Particles)
-    N = length(p.x)
-
-    a = wsample(1:N,p.w,N)
-    x = p.x[a]
-
-    return Particles(x)
-end
+particle_type(X::Particles{T}) where {T} = T
