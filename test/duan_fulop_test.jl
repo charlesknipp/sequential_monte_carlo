@@ -3,18 +3,20 @@ include(joinpath(pwd(),"src/sequential_monte_carlo.jl"))
 using .SequentialMonteCarlo
 using Printf,Random,Distributions,LinearAlgebra,StatsBase
 
-test_params = LinearGaussian(0.8,0.5,1.0,1.0)
-test_model  = StateSpaceModel(test_params)
-x,y = simulate(test_model,1000)
+prior = product_distribution([
+    TruncatedNormal(0,1,-1,1),
+    LogNormal(),
+    LogNormal()
+])
 
-prior(μ,Σ) = TruncatedMvNormal(μ,Σ,[-1.0,-1.0,-Inf,-Inf],[1.0,1.0,Inf,Inf])
-linGauss(A,B,Q,R) = LinearGaussian(A,B,exp(Q),exp(R))
+mod_func(θ) = StateSpaceModel(
+    LinearGaussian(θ[1],1.0,θ[2],θ[3],0.0,1.0),
+    (1,1)
+)
 
-θ,w = densityTemperedSMC(100,100,y,prior,[0.3,0.4,0.0,0.0],linGauss)
+test_mod = mod_func([0.5,1.0,1.0])
+x,y = simulate(test_mod,500)
 
-meanθ = mean(reduce(hcat,θ),weights(w),2)
-meanθ[3:4] = exp.(meanθ[3:4])
-
-# print output to console
-println()
-for i in 1:4; @printf("θ[%d] = % 2.6f\n",i,meanθ[i]); end
+# this algorithm seems to function as intended
+θ = density_tempered_pf(512,1024,y,prior,mod_func,10,0.5,Random.GLOBAL_RNG)
+mean(reduce(hcat,θ.x)',dims=1)
