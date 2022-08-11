@@ -4,23 +4,23 @@ using .SequentialMonteCarlo
 using Printf,Random,Distributions,LinearAlgebra,StatsBase
 
 
-# simulate data
-test_params = LinearGaussian(0.8,0.5,1.0,1.0)
-test_model  = StateSpaceModel(test_params)
-x,y = simulate(test_model,50)
+prior = product_distribution([
+    TruncatedNormal(0,1,-1,1),
+    LogNormal(),
+    LogNormal()
+])
 
-# construct a prior distribution
-prior(μ,Σ) = TruncatedMvNormal(μ,Σ,[-1.0,-1.0,0.0,0.0],[1.0,1.0,Inf,Inf])
-θ0 = [0.7,0.7,1.0,1.0]
+mod_func(θ) = StateSpaceModel(
+    LinearGaussian(θ[1],1.0,exp(θ[2]),exp(θ[3]),0.0,1.0),
+    (1,1)
+)
 
-θ,Xt = SMC2(20,100,y,θ0,prior,0.5,LinearGaussian)
 
-mean(reduce(hcat,θ.x),weights(θ.w),2)
+alg = SMC²(100,100,prior,mod_func,4,0.5,Random.GLOBAL_RNG)
 
-# [println(Xtm.logμ) for Xtm in Xt.p]
+test_mod = mod_func([0.5,1.0,1.0])
+x,y = simulate(test_mod,100)
 
-#=
-    The output looks as it should, but the weights that are generated are not
-    what they seem. The algorithm spits out an evenly weighted particle cloud
-    which should not be the case
-=#
+for i in 1:100
+    update!(alg,y)
+end
