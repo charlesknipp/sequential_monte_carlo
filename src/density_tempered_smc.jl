@@ -1,183 +1,117 @@
-export densityTemperedSMC
+export density_tempered_pf
 
-mutable struct DensityTemperedSMC
-    M::Int64
-    N::Int64
+# only for vectors of Float64
+function density_tempered_pf(
+        N::Int64,
+        M::Int64,
+        y::Vector{Float64},
+        prior::Sampleable,
+        model::SSM,
+        chain_length::Int64,
+        ess_threshold::Float64,
+        rng::AbstractRNG,
+        verbose::Bool=true
+    ) where SSM
 
-    iteration::Int64
-    y::AbstractVector
+    #logZ = zeros(Float64,M)
+    θ  = Particles{Vector{Float64}}([rand(rng,prior) for _ in 1:M])
+    pf = [ParticleFilter(rng,N,model(θ.x[i])) for i in 1:M]
 
-    prior::Sampleable
-    model::Function
+    # change to pmap(x -> log_likelihood(x,y),pf)
+    logZ = map(x -> log_likelihood(x,y),pf)
+    reweight!(θ,logZ)
 
-    ξ::Float64
-    B::Float64
-    logZ::Vector{Float64}
+    ξ = 0.0
 
-    # particle characteristics
-    θ::Vector{Vector{Float64}}
-    logw::Vector{Float64}
-    w::Vector{Float64}
-    ess::Float64
-end
+    # define the main loop for iteration
+    while ξ < 1.0
+        lower_bound = oldξ = ξ
+        upper_bound = 2.0
 
-# rewritten bootstrap method, slightly faster (emphasis on slightly)
-function bootstrapLikelihood(N::Int64,y::Vector{Float64},prior::StateSpaceModel)
-    T = length(y)
+        # bisection search for ξ
+        local newξ,logw
+        while upper_bound-lower_bound > 1.e-6
+            newξ = (upper_bound+lower_bound)/2.0
+            logw = (newξ-oldξ)*logZ
+            
+            reweight!(θ,logw)
 
-    # initialize algorithm
-    logZ = zeros(Float64,T)
-
-    # in the case where x0 is located at the origin
-    x0 = (prior.dim_x == 1) ? 0.0 : zeros(Float64,prior.dim_x)
-    p0 = Particles(rand(prior.transition(x0),N))
-
-    logZ[1] = p0.logμ
-    ps = resample(p0)
-
-    for t in 2:T
-        xt = rand.(prior.transition.(ps.x))
-        wt = logpdf.(prior.observation.(xt),y[t])
-        pt = Particles(xt,wt)
-
-        logZ[t] = pt.logμ
-        ps = resample(pt)
-    end
-
-    return logZ
-end
-
-function reweight!(smc::DensityTemperedSMC)
-    smc.iteration += 1
-
-    lower_bound = oldξ = smc.ξ
-    upper_bound = 2.0
-
-    local ess,newξ,logw
-
-    while upper_bound-lower_bound > 1.e-6
-        newξ = (upper_bound+lower_bound)/2.0
-
-        logw = (newξ-oldξ)*smc.logZ
-        logw = logw.-maximum(logw)
-
-        w = exp.(logw)
-        w = w/sum(w)
-
-        ess = 1.0/sum(w.^2)
-
-        if ess == smc.B
-            break
-        elseif ess < smc.B
-            upper_bound = newξ
-        else
-            lower_bound = newξ
-        end
-    end
-
-    if newξ ≥ 1.0
-        newξ = 1.0
-
-        logw = (newξ-oldξ)*smc.logZ
-        logw = logw.-maximum(logw)
-    end
-
-    smc.ess = ess
-    smc.ξ = newξ
-
-    # display the tempering sequence in the console
-    @printf("ξ[%0d] = %0.6f\n",smc.iteration,smc.ξ)
-
-    # take the log of the normalized weights to reduce numerical problems
-    w = exp.(logw)
-    smc.w = w/sum(w)
-    smc.logw = log.(smc.w)
-end
-
-function resample!(smc::DensityTemperedSMC)
-    a = wsample(1:smc.M,smc.w,smc.M)
-
-    smc.θ = smc.θ[a]
-    smc.logZ = smc.logZ[a]
-end
-
-function rejuvinate!(smc::DensityTemperedSMC,c::Float64,len_chain::Int64=5)
-    print("rejuvenating...")
-    θ = reduce(hcat,smc.θ)
-
-    # calculate the weighted mean and covariance
-    μ = vec(mean(θ,weights(smc.w),2))
-    Σ = cov(θ,weights(smc.w),2)
-
-    # kinda sussy
-    newθ = rand(MvNormal(μ,c*Σ),smc.M)
-
-    for _ in 1:len_chain
-        u = rand(smc.M)
-        for m in 1:smc.M
-            # TODO: implement new SSM behavior
-            Θm = StateSpaceModel(smc.model(newθ[:,m]...))
-            logZm = sum(bootstrapLikelihood(smc.N,smc.y,Θm))
-
-            # TODO: store logpdf(prior,θ) to avoid redundancies
-            αm = smc.ξ*(logZm-smc.logZ[m])
-            αm += (logpdf(smc.prior,smc.θ[m])-logpdf(smc.prior,newθ[:,m]))
-            αm = exp(αm)
-
-            if u[m] ≤ minimum([αm,1.0])
-                smc.θ[m] = newθ[:,m]
-                smc.logZ[m] = logZm
+            if θ.ess[] == ess_threshold*M
+                break
+            elseif θ.ess[] < ess_threshold*M
+                upper_bound = newξ
+            else
+                lower_bound = newξ
             end
         end
-    end
 
-    # reset the cursor to print ξ to stdout
-    print("\r\u1b[K")
-end
+        # make sure to account for corner solutions
+        if newξ ≥ 1.0
+            newξ = 1.0
+    
+            logw = (newξ-oldξ)*logZ
+            reweight!(θ,logw)
+        end
 
-# TODO: add [rng=GLOBAL_RNG] to aid in testing
-function densityTemperedSMC(
-        M::Int64,
-        N::Int64,
-        y::AbstractVector,
-        prior::Function,
-        θ0::Vector{Float64},
-        model::Function,
-        threshold::Float64 = 0.5
-    )
-    iter = 0
+        ξ = newξ
 
-    # consider restructuring θ
-    pθ = prior(θ0,Matrix{Float64}(I(length(θ0))))
-    θ  = rand(pθ,M)
-    θ  = [θ[:,m] for m in 1:M]
+        # if verbose is true print the ess
+        if verbose @printf("\nξ = %2.5f\tess = %3.5f",ξ,θ.ess[]) end
 
-    # consider rewriting this method
-    logZ = zeros(Float64,M)
-    for m in 1:M
-        Θm = StateSpaceModel(model(θ[m]...))
-        logZ[m] = sum(bootstrapLikelihood(N,y,Θm))
-    end
+        # if ess is small enough, then rejuvenate
+        if θ.ess[] < ess_threshold*M
+            resample!(θ)
+            acc_rate = 0.0
 
-    # initialize weights at 1/M
-    logw = fill(-1*log(M),M)
-    w    = fill(1/M,M)
-    ess  = M
+            #reindex particles, filters and likelihoods
+            θ.x[:]  .= θ.x[θ.a]
+            pf[:]   .= pf[θ.a]
+            logZ[:] .= logZ[θ.a]
 
-    ξ0 = 1.e-12
-    B  = threshold*M
+            # define pmmh movement
+            catθ = reduce(hcat,θ.x)
+            dθ   = (2.38^2) / length(prior)
 
-    # initialize the algorithm
-    smc = DensityTemperedSMC(M,N,iter,y,pθ,model,ξ0,B,logZ,θ,logw,w,ess)
+            # evaluate this to avoid cholesky decomposition errors
+            Σ = norm(cov(catθ')) < 1e-12 ? 1e-2*I : dθ*cov(catθ') + 1e-10*I
+            if verbose @printf("\t[rejuvenating]") end
 
-    while smc.ξ < 1.0
-        reweight!(smc)
+            ## particle rejuvenation (could be parallelized)
+            for i in eachindex(θ.x)
+                for _ in 1:chain_length
+                    θ_prop = rand(MvNormal(θ.x[i],Σ))
 
-        if smc.ess < B
-            resample!(smc)
-            rejuvinate!(smc,0.5)
+                    # proposed particle must be in the support of the prior
+                    if insupport(prior,θ_prop)
+                        pf_prop   = ParticleFilter(rng,N,model(θ_prop))
+                        logZ_prop = log_likelihood(pf_prop,y)
+
+                        prior_ratio = logpdf(prior,θ_prop)-logpdf(prior,θ.x[i])
+                        likelihood_ratio = ξ*(logZ_prop-logZ[i])
+
+                        log_post_prop = logZ_prop + logpdf(prior,θ_prop)
+                        acc_ratio     = likelihood_ratio + prior_ratio
+
+                        if (log_post_prop > -Inf && log(rand()) < acc_ratio)
+                            θ.x[i]  = θ_prop
+                            pf[i]   = pf_prop
+                            logZ[i] = logZ_prop
+
+                            acc_rate += 1
+                        end
+                    end
+                end
+
+                # reset θ-weights
+                θ.w[i] = 1.0
+            end
+
+            acc_rate = acc_rate/(chain_length*M)
+            if verbose @printf("\t acc rate: %1.4f",acc_rate) end
         end
     end
+    
+    if verbose @printf("\n") end
 
-    return smc.θ,smc.w
+    return θ
 end
