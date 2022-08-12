@@ -39,7 +39,7 @@ function update!(pf::ParticleFilter,y::Float64)
     logw = similar(pf.state.w)
 
     ## propogate
-    for i in eachindex(xp)    
+    for i in eachindex(xp)
         pf.state.x[i] = rand(pf.rng,transition(pf.model,xp[i]))
         logw[i] = logpdf(observation(pf.model,pf.state.x[i]),y)
     end
