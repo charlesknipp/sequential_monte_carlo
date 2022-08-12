@@ -1,10 +1,10 @@
-using Printf
+export SMC²,update!
 
 #=
 SMC² algorithm
 =#
 
-struct SMC²{SSM}
+mutable struct SMC²{SSM}
     parameters::Particles{Vector{Float64}}
     filters::Vector{ParticleFilter}
     likelihoods::Vector{Float64}
@@ -96,9 +96,9 @@ function update!(
         acc_rate = 0.0
 
         # reindex all relevant variables (maybe problematic)
-        θ.x[:] = θ.x[θ.a]
-        pf[:]  = pf[θ.a]
-        smc².likelihoods[:] = smc².likelihoods[θ.a]
+        θ.x[:] .= θ.x[θ.a]
+        pf      = pf[θ.a]
+        smc².likelihoods = smc².likelihoods[θ.a]
 
         # define pmmh movement
         catθ = reduce(hcat,θ.x)
@@ -121,7 +121,7 @@ function update!(
                     prior_ratio = logpdf(smc².prior,θ_prop)-logpdf(smc².prior,θ.x[i])
                     likelihood_ratio = logZ_prop-smc².likelihoods[i]
 
-                    log_post_prop = logZ_prop + logpdf(prior,θ_prop)
+                    log_post_prop = logZ_prop + logpdf(smc².prior,θ_prop)
                     acc_ratio     = likelihood_ratio + prior_ratio
 
                     if (log_post_prop > -Inf && log(rand()) < acc_ratio)
