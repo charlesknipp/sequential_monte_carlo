@@ -1,4 +1,4 @@
-export SMC²,update!
+using Printf
 
 #=
 SMC² algorithm
@@ -29,7 +29,7 @@ struct SMC²{SSM}
 
         θ  = Particles{Vector{Float64}}([rand(rng,prior) for _ in 1:M])
         pf = [ParticleFilter(rng,N,model(θ.x[i])) for i in 1:M]
-        θ.w[:] .= 1.0
+        #θ.w[:] .= 1.0
 
         new{typeof(model)}(
             θ,
@@ -45,8 +45,22 @@ struct SMC²{SSM}
     end
 end
 
+#=
+BUG: in rejuvenation, the time index of each state particle deviates from the
+given index by the parameter vector.
+
+Interesetingly the problem is not with pf_prop, but when it is placed in the
+array of filters
+=#
+
 # only defined for univariate valued y_{1:T}
-function update!(smc²::SMC²,y::Vector{Float64},verbose::Bool=true)
+function update!(
+        smc²::SMC²,
+        y::Vector{Float64},
+        verbose::Bool=true,
+        debug::Bool=false
+    )
+
     # save the log weights at each step of the filter
     log_weights = copy(smc².parameters.w)
     log_weights = log.(log_weights)
@@ -58,18 +72,18 @@ function update!(smc²::SMC²,y::Vector{Float64},verbose::Bool=true)
     ## move filters through one step
     for i in eachindex(smc².parameters.x)
         # this needs a little work...
-        smc².likelihoods[i] += update!(pf[i],y[θ.t[]])
-        log_weights[i]      += smc².likelihoods[i]
+        marginal_likelihood  = update!(pf[i],y[θ.t[]])
+        smc².likelihoods[i] += marginal_likelihood
+        log_weights[i]      += marginal_likelihood
     end
 
     ## reweight θ-particles
     reweight!(θ,log_weights)
     ess_min = smc².resample_threshold*M
 
-    # if verbose is true print the ess
     if verbose
         @printf(
-            "\nt = %4d\tess = %3.5f",
+            "\nt = %3d   ess = %3.5f",
             smc².parameters.t[],
             θ.ess[]
         )
@@ -81,10 +95,10 @@ function update!(smc²::SMC²,y::Vector{Float64},verbose::Bool=true)
         resample!(θ)
         acc_rate = 0.0
 
-        # reindex all relevant variables
-        θ.x[:] .= θ.x[θ.a]
-        pf[:]  .= pf[θ.a]
-        smc².likelihoods[:] .= smc².likelihoods[θ.a]
+        # reindex all relevant variables (maybe problematic)
+        θ.x[:] = θ.x[θ.a]
+        pf[:]  = pf[θ.a]
+        smc².likelihoods[:] = smc².likelihoods[θ.a]
 
         # define pmmh movement
         catθ = reduce(hcat,θ.x)
@@ -97,21 +111,26 @@ function update!(smc²::SMC²,y::Vector{Float64},verbose::Bool=true)
         ## particle rejuvenation (could be parallelized)
         for i in eachindex(θ.x)
             for _ in 1:smc².chain_length
-                θ_prop    = rand(MvNormal(θ.x[i],Σ))
-                pf_prop   = ParticleFilter(smc².rng,smc².N,smc².model(θ_prop))
-                logZ_prop = log_likelihood(pf_prop,y[1:θ.t[]])
+                θ_prop = rand(MvNormal(θ.x[i],Σ))
 
-                prop  = logpdf(smc².prior,θ_prop) + logZ_prop
-                old   = logpdf(smc².prior,θ.x[i]) + smc².likelihoods[i]
+                # proposed particle must be in the support of the prior
+                if insupport(smc².prior,θ_prop)
+                    local pf_prop   = ParticleFilter(smc².rng,smc².N,smc².model(θ_prop))
+                    local logZ_prop = log_likelihood(pf_prop,y[1:θ.t[]])
 
-                #@printf("\n\rprop: %4.5f\told: %4.5f",prop,old)
+                    prior_ratio = logpdf(smc².prior,θ_prop)-logpdf(smc².prior,θ.x[i])
+                    likelihood_ratio = logZ_prop-smc².likelihoods[i]
 
-                if rand() ≤ minimum([1.0,exp(prop-old)])
-                    θ.x[i] = θ_prop
-                    pf[i]  = pf_prop
-                    smc².likelihoods[i] = logZ_prop
+                    log_post_prop = logZ_prop + logpdf(prior,θ_prop)
+                    acc_ratio     = likelihood_ratio + prior_ratio
 
-                    acc_rate += 1
+                    if (log_post_prop > -Inf && log(rand()) < acc_ratio)
+                        θ.x[i] = θ_prop
+                        pf[i]  = pf_prop
+                        smc².likelihoods[i] = logZ_prop
+
+                        acc_rate += 1
+                    end
                 end
             end
 
@@ -120,7 +139,14 @@ function update!(smc²::SMC²,y::Vector{Float64},verbose::Bool=true)
         end
 
         acc_rate = acc_rate/(smc².chain_length*M)
-        if verbose @printf("\t acc rate: %1.4f",acc_rate) end
+        if verbose @printf("\tacc rate: %1.4f",acc_rate) end
+    end
+
+    if debug
+        x_t = mean([filter.state.t[] for filter in pf])
+        θ_t = smc².parameters.t[]
+    
+        @printf("\n   x.t = %3d   θ.t = %3d",x_t,θ_t)
     end
 
     smc².parameters.t[] += 1
