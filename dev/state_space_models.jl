@@ -39,7 +39,6 @@ struct LinearGaussian <: ModelParameters
 
     # initial distribution
     x0::Float64
-    σ0::Float64
 end
 
 function transition(
@@ -65,5 +64,5 @@ function observation(
 end
 
 function initial_dist(model::StateSpaceModel{LinearGaussian})
-    return Normal(model.parameters.x0,model.parameters.σ0)
+    return Normal(model.parameters.x0,model.parameters.Q)
 end
