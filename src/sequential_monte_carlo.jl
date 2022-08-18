@@ -1,9 +1,6 @@
 module SequentialMonteCarlo
 
-using Distributions,LinearAlgebra,StatsBase,Statistics,Printf,Random
-
-import StatsBase:  cov,mean,params,mode,median
-import Statistics: cov,mean,quantile,median
+using Distributions,LinearAlgebra,Statistics,Printf,Random,StatsBase
 
 include("state_space_model.jl")
 include("particles.jl")
