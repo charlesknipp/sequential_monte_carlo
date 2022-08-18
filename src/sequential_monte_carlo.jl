@@ -7,8 +7,6 @@ import Statistics: cov,mean,quantile,median
 
 include("state_space_model.jl")
 include("particles.jl")
-include("particle_filter.jl")
-include("smc_squared.jl")
-include("density_tempered_smc.jl")
+include("smc_samplers.jl")
 
 end
