@@ -1,4 +1,5 @@
-export simulate,StateSpaceModel,LinearGaussian,transition,observation,initial_dist
+export StateSpaceModel,LinearGaussian,StochasticVolatility
+export simulate,transition,observation,initial_dist
 
 abstract type ModelParameters end
 
@@ -17,13 +18,12 @@ function simulate(rng::AbstractRNG,model::StateSpaceModel,T::Int64)
     y = Vector{y_type}(undef,T)
 
     x[1] = rand(rng,initial_dist(model))
+    y[1] = rand(rng,observation(model,x[1]))
 
-    for t in 1:T-1
-        y[t]   = rand(rng,observation(model,x[t]))
-        x[t+1] = rand(rng,transition(model,x[t]))
+    for t in 2:T
+        x[t] = rand(rng,transition(model,x[t-1]))
+        y[t] = rand(rng,observation(model,x[t]))
     end
-
-    y[T] = rand(rng,observation(model,x[T]))
 
     return x,y
 end
@@ -45,27 +45,28 @@ end
 
 function transition(
         model::StateSpaceModel{LinearGaussian},
-        xt::Float64
+        x::Float64
     )
     A = model.parameters.A
     Q = model.parameters.Q
 
-    return Normal(A*xt,Q)
+    return Normal(A*x,Q)
 end
 
 function observation(
         model::StateSpaceModel{LinearGaussian},
-        xt::Float64
+        x::Float64
     )
     B = model.parameters.B
     R = model.parameters.R
 
-    return Normal(B*xt,R)
+    return Normal(B*x,R)
 end
 
 function initial_dist(model::StateSpaceModel{LinearGaussian})
     return Normal(model.parameters.x0,model.parameters.Q)
 end
+
 
 struct StochasticVolatility <: ModelParameters
     # unconditional mean and speed
@@ -78,20 +79,20 @@ end
 
 function transition(
         model::StateSpaceModel{StochasticVolatility},
-        xt::Float64
+        x::Float64
     )
     μ = model.parameters.μ
     ρ = model.parameters.ρ
     σ = model.parameters.σ
 
-    return Normal(μ+ρ*(xt-μ),σ)
+    return Normal(μ+ρ*(x-μ),σ)
 end
 
 function observation(
         model::StateSpaceModel{StochasticVolatility},
-        xt::Float64
+        x::Float64
     )
-    return Normal(0.0,exp(xt/2))
+    return Normal(0.0,exp(0.5*x))
 end
 
 function initial_dist(model::StateSpaceModel{StochasticVolatility})
