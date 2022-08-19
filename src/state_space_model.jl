@@ -47,7 +47,6 @@ function transition(
         model::StateSpaceModel{LinearGaussian},
         xt::Float64
     )
-
     A = model.parameters.A
     Q = model.parameters.Q
 
@@ -58,7 +57,6 @@ function observation(
         model::StateSpaceModel{LinearGaussian},
         xt::Float64
     )
-
     B = model.parameters.B
     R = model.parameters.R
 
@@ -70,9 +68,11 @@ function initial_dist(model::StateSpaceModel{LinearGaussian})
 end
 
 struct StochasticVolatility <: ModelParameters
-    # explain all of these...
+    # unconditional mean and speed
     μ::Float64
     ρ::Float64
+
+    # volatility
     σ::Float64
 end
 
@@ -80,7 +80,6 @@ function transition(
         model::StateSpaceModel{StochasticVolatility},
         xt::Float64
     )
-
     μ = model.parameters.μ
     ρ = model.parameters.ρ
     σ = model.parameters.σ
@@ -92,9 +91,7 @@ function observation(
         model::StateSpaceModel{StochasticVolatility},
         xt::Float64
     )
-
-    return Normal(exp(xt/2))
-
+    return Normal(0.0,exp(xt/2))
 end
 
 function initial_dist(model::StateSpaceModel{StochasticVolatility})
