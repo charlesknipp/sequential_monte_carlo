@@ -32,7 +32,7 @@ function SMC(
     ) where SSM
 
     θ = map(m -> rand(rng,prior),1:M)
-    ω = zeros(Float64,M)
+    ω = (1/M)*ones(Float64,M)
 
     x = fill(zeros(Float64,N),M)
     w = similar(x)
@@ -72,7 +72,7 @@ function rejuvenate!(smc::SMC,y::Vector{Float64},ξ::Float64,verbose::Bool)
     Σ = norm(cov(catθ')) < 1.e-12 ? 1.e-2*I : dθ*cov(catθ') + 1.e-10I
     if verbose @printf("\t[rejuvenating]") end
 
-    for m in 1:smc.M
+    Threads.@threads for m in 1:smc.M
         for _ in 1:smc.chain
             # currently only supports random walk
             θ_prop = rand(smc.rng,MvNormal(smc.θ[m],Σ))
@@ -143,7 +143,7 @@ Implementation of Duan & Fulop's density tempered particle filter.
 ```
 """
 function density_tempered(smc::SMC,y::Vector{Float64},verbose=true)
-    for m in 1:smc.M
+    Threads.@threads for m in 1:smc.M
         smc.x[m],smc.w[m],smc.logZ[m] = log_likelihood(
             smc.rng,
             smc.N,
