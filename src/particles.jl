@@ -40,7 +40,7 @@ function particle_filter(
 
     if !isnothing(proposal)
         logw += logpdf.(initial_dist(model),x)
-        logw += -1*logpdf.(proposal.(xp),x)
+      # logw += -1*logpdf.(proposal.(xp),x)
     end
 
     # normalize initial weights
