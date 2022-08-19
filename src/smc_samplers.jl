@@ -157,6 +157,9 @@ function density_tempered(smc::SMC,y::Vector{Float64},verbose=true)
 
     ξ = 0.0
     while ξ < 1.0
+        # force resample if ξ < 1.0
+        resample_flag = true
+
         ## (2.2.2) find optimal ξ and reweight particles
         lower_bound = oldξ = ξ
         upper_bound = 2.0
@@ -180,6 +183,7 @@ function density_tempered(smc::SMC,y::Vector{Float64},verbose=true)
 
         # account for corner solutions
         if newξ ≥ 1.0
+            resample_flag = false
             newξ = 1.0
             logω = (newξ-oldξ)*smc.logZ
             _,smc.ω,smc.ess = normalize(logω)
@@ -189,7 +193,7 @@ function density_tempered(smc::SMC,y::Vector{Float64},verbose=true)
 
         if verbose @printf("ξ = %1.5f\tess = %4.3f",ξ,smc.ess) end
 
-        if smc.ess < smc.ess_min
+        if resample_flag
             ## (2.2.3) resample particles
             resample!(smc)
 
