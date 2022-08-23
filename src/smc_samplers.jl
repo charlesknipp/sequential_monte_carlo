@@ -1,10 +1,10 @@
 export SMC,expected_parameters,density_tempered,smc²,smc²!
 
-mutable struct SMC{SSM}
+mutable struct SMC{SSM,XT}
     θ::Vector{Vector{Float64}}
     ω::Vector{Float64}
 
-    x::Vector{Vector{Float64}}
+    x::Vector{Vector{XT}}
     w::Vector{Vector{Float64}}
 
     ess::Float64
@@ -34,14 +34,17 @@ function SMC(
     θ = map(m -> rand(rng,prior),1:M)
     ω = (1/M)*ones(Float64,M)
 
-    x = fill(zeros(Float64,N),M)
-    w = similar(x)
+    x = fill(preallocate(model(θ[1]),N),M)
+    w = fill(zeros(Float64,N),M)
 
     logZ = zeros(Float64,M)
     ess = 1.0*M
     ess_min = M*ess_threshold
 
-    return SMC{typeof(model)}(θ,ω,x,w,ess,ess_min,N,M,chain,logZ,model,prior,rng)
+    MT = typeof(model)
+    XT = eltype(x[1])
+
+    return SMC{MT,XT}(θ,ω,x,w,ess,ess_min,N,M,chain,logZ,model,prior,rng)
 end
 
 function expected_parameters(smc::SMC)
