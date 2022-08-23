@@ -30,6 +30,13 @@ end
 
 simulate(mod::StateSpaceModel,T::Int64) = simulate(Random.GLOBAL_RNG,mod,T)
 
+
+"""
+univariate linear gaussian
+
+x[t] ~ N(A*x[t-1],Q)
+y[t] ~ N(B*x[t],R)
+"""
 struct LinearGaussian <: ModelParameters
     # coefficients
     A::Float64
@@ -67,7 +74,12 @@ function initial_dist(model::StateSpaceModel{LinearGaussian})
     return Normal(model.parameters.x0,model.parameters.Q)
 end
 
+"""
+stochastic volatility
 
+x[t] ~ N(μ+ρ*(μ-x[t-1]),σ)
+y[t] ~ N(0,exp(0.5*x[t]))
+"""
 struct StochasticVolatility <: ModelParameters
     # unconditional mean and speed
     μ::Float64
@@ -105,11 +117,13 @@ end
 
 
 """
-π[t] = τ[t] + η[t]      s.t. η[t] ~ N(0,σ²[η,t]*ζ[η,t])
-τ[t] = τ[t-1] + ε[t]    s.t. ε[t] ~ N(0,σ²[ε,t]*ζ[ε,t])
+unobserved component stochastic volatility
 
-log(σ²[η,t]) = log(σ²[η,t-1]) + v[η,t]
-log(σ²[ε,t]) = log(σ²[ε,t-1]) + v[ε,t]
+x[t] ~ N(x[t-1],exp(0.5*σx[t]))
+y[t] ~ N(x[t],exp(0.5*σy[t]))
+
+σx[t] ~ N(σx[t-1],γ)
+σy[t] ~ N(σy[t-1],γ)
 """
 struct UCSV <: ModelParameters
     # smoothing parameter
