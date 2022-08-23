@@ -102,3 +102,34 @@ function initial_dist(model::StateSpaceModel{StochasticVolatility})
 
     return Normal(μ,σ/sqrt(1.0-ρ^2))
 end
+
+
+"""
+π[t] = τ[t] + η[t]      s.t. η[t] ~ N(0,σ²[η,t]*ζ[η,t])
+τ[t] = τ[t-1] + ε[t]    s.t. ε[t] ~ N(0,σ²[ε,t]*ζ[ε,t])
+
+log(σ²[η,t]) = log(σ²[η,t-1]) + v[η,t]
+log(σ²[ε,t]) = log(σ²[ε,t-1]) + v[ε,t]
+"""
+struct UCSV <: ModelParameters
+    # smoothness parameter
+    γ::Float64
+end
+
+function transition(
+        model::StateSpaceModel{UCSV},
+        x::Vector{Float64}
+    )
+    γ = model.parameters.γ
+    x,ση,σε = x
+
+    ση = ση + γ*rand()
+end
+
+function observation(
+        model::StateSpaceModel{UCSV},
+        x::Float64
+    )
+    # π[t+1] = π[t] + exp(x[1,t])
+    # y[t] = π[t] + exp(x[2,t])
+end
