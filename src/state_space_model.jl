@@ -11,8 +11,8 @@ end
 function simulate(rng::AbstractRNG,model::StateSpaceModel,T::Int64)
     x_dim,y_dim = model.dims
 
-    x_type = x_dim == 1 ? Float64 : Vector{Float64}
-    y_type = y_dim == 1 ? Float64 : Vector{Float64}
+    x_type = x_dim == 1 ? Float64 : SVector{x_dim,Float64}
+    y_type = y_dim == 1 ? Float64 : SVector{y_dim,Float64}
 
     x = Vector{x_type}(undef,T)
     y = Vector{y_type}(undef,T)
@@ -48,6 +48,10 @@ struct LinearGaussian <: ModelParameters
 
     # initial distribution
     x0::Float64
+end
+
+function preallocate(model::StateSpaceModel{LinearGaussian},N::Int64)
+    return zeros(Float64,N)
 end
 
 function transition(
@@ -87,6 +91,10 @@ struct StochasticVolatility <: ModelParameters
 
     # volatility
     σ::Float64
+end
+
+function preallocate(model::StateSpaceModel{StochasticVolatility},N::Int64)
+    return zeros(Float64,N)
 end
 
 function transition(
@@ -131,47 +139,56 @@ struct UCSV <: ModelParameters
 
     # starting value
     x0::Float64
-
-    # log volatilities
-    σx::Base.RefValue{Float64}
-    σy::Base.RefValue{Float64}
+    σ0::Tuple{Float64,Float64}
+end
+        
+function preallocate(model::StateSpaceModel{UCSV},N::Int64)
+    return fill(zeros(SVector{3}),N)
+    #return zeros(Float64,N)
 end
 
 function transition(
         model::StateSpaceModel{UCSV},
-        x::Float64
+        x::SVector{3,Float64}
     )
     γ  = model.parameters.γ
-    σx = model.parameters.σx
-    σy = model.parameters.σy
+    x,σx,σy = x
 
     # update log volatilities
-    σx[] += rand(Normal(0.0,γ))
-    σy[] += rand(Normal(0.0,γ))
+    σx += rand(Normal(0.0,γ))
+    σy += rand(Normal(0.0,γ))
 
-    return Normal(x,exp(0.5*σx[]))
+    return product_distribution([
+        Normal(x,exp(0.5*σx)),
+        Dirac(σx),
+        Dirac(σy)
+    ])
+end
 end
 
 function observation(
         model::StateSpaceModel{UCSV},
-        x::Float64
+        x::SVector{3,Float64}
     )
-    σy = model.parameters.σy
+    x,_,σy = x
 
-    return Normal(x,exp(0.5*σy[]))
+    return Normal(x,exp(0.5*σy))
 end
 
 function initial_dist(
         model::StateSpaceModel{UCSV}
     )
     γ  = model.parameters.γ
-    σx = model.parameters.σx
-    σy = model.parameters.σy
     x0 = model.parameters.x0
-
+    σx,σy = model.parameters.σ0
+    
     # update log volatilities
-    σx[] += rand(Normal(0.0,γ))
-    σy[] += rand(Normal(0.0,γ))
+    σx += rand(Normal(0.0,γ))
+    σy += rand(Normal(0.0,γ))
 
-    return Normal(x0,exp(0.5*σx[]))
+    return product_distribution([
+        Normal(x0,exp(0.5*σx)),
+        Dirac(σx),
+        Dirac(σy)
+    ])
 end
