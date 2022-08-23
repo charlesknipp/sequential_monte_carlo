@@ -44,7 +44,7 @@ lg_mod(θ) = StateSpaceModel(
     (1,1)
 )
 
-T = 5000
+T = 1000
 lg_θ = [0.5,1.0,1.0]
 x,y  = simulate(lg_mod(lg_θ),T)
 
@@ -64,12 +64,12 @@ smc²(lg_smc²,y)
 plt = @animate for t in 2:T
     smc²!(lg_smc²,y,t)
     plot_histograms(lg_smc²,["A","Q","R"])
-    plot!(title=["",t,""])
-end
+    plot!(plot_title="\n"*t)
+end every 100
 
 
 
-gif(Animation(plt.dir,plt.frames[1:100:5000]),"linear_gaussian_animation.gif",fps=15)
+gif(plt,"linear_gaussian_animation.gif",fps=15)
 expected_parameters(lg_smc²)
 plot_histograms(lg_smc²,["A","Q","R"])
 plot!(plot_title="\n5000")
