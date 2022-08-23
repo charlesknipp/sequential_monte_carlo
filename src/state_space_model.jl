@@ -112,24 +112,52 @@ log(σ²[η,t]) = log(σ²[η,t-1]) + v[η,t]
 log(σ²[ε,t]) = log(σ²[ε,t-1]) + v[ε,t]
 """
 struct UCSV <: ModelParameters
-    # smoothness parameter
+    # smoothing parameter
     γ::Float64
+
+    # starting value
+    x0::Float64
+
+    # log volatilities
+    σx::Base.RefValue{Float64}
+    σy::Base.RefValue{Float64}
 end
 
 function transition(
         model::StateSpaceModel{UCSV},
-        x::Vector{Float64}
+        x::Float64
     )
-    γ = model.parameters.γ
-    x,ση,σε = x
+    γ  = model.parameters.γ
+    σx = model.parameters.σx
+    σy = model.parameters.σy
 
-    ση = ση + γ*rand()
+    # update log volatilities
+    σx[] += rand(Normal(0.0,γ))
+    σy[] += rand(Normal(0.0,γ))
+
+    return Normal(x,exp(0.5*σx[]))
 end
 
 function observation(
         model::StateSpaceModel{UCSV},
         x::Float64
     )
-    # π[t+1] = π[t] + exp(x[1,t])
-    # y[t] = π[t] + exp(x[2,t])
+    σy = model.parameters.σy
+
+    return Normal(x,exp(0.5*σy[]))
+end
+
+function initial_dist(
+        model::StateSpaceModel{UCSV}
+    )
+    γ  = model.parameters.γ
+    σx = model.parameters.σx
+    σy = model.parameters.σy
+    x0 = model.parameters.x0
+
+    # update log volatilities
+    σx[] += rand(Normal(0.0,γ))
+    σy[] += rand(Normal(0.0,γ))
+
+    return Normal(x0,exp(0.5*σx[]))
 end
