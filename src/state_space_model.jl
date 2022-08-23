@@ -1,4 +1,4 @@
-export StateSpaceModel,LinearGaussian,StochasticVolatility
+export StateSpaceModel,LinearGaussian,StochasticVolatility,UCSV
 export simulate,transition,observation,initial_dist
 
 abstract type ModelParameters end
@@ -158,12 +158,11 @@ function transition(
     σx += rand(Normal(0.0,γ))
     σy += rand(Normal(0.0,γ))
 
-    return product_distribution([
+    return TupleProduct((
         Normal(x,exp(0.5*σx)),
         Dirac(σx),
         Dirac(σy)
-    ])
-end
+    ))
 end
 
 function observation(
@@ -186,9 +185,9 @@ function initial_dist(
     σx += rand(Normal(0.0,γ))
     σy += rand(Normal(0.0,γ))
 
-    return product_distribution([
+    return TupleProduct((
         Normal(x0,exp(0.5*σx)),
         Dirac(σx),
         Dirac(σy)
-    ])
+    ))
 end
