@@ -35,12 +35,20 @@ function particle_filter(
     )
 
     # initialize states and reweight
-    x    = rand(rng,initial_dist(model),N)
-    logw = logpdf.(observation.(Ref(model),x),y)
-
-    if !isnothing(proposal)
-        logw += logpdf.(initial_dist(model),x)
-      # logw += -1*logpdf.(proposal.(xp),x)
+    x    = preallocate(model,N)
+    logw = zeros(Float64,N)
+    
+    ## depracated in favor of preallocation
+    # x    = rand(rng,initial_dist(model),N)
+    # logw = logpdf.(observation.(Ref(model),x),y)
+    for i in 1:N
+        x[i]    = rand(rng,initial_dist(model))
+        logw[i] = logpdf(observation(model,x[i]),y)
+    
+        if !isnothing(proposal)
+            logw[i] += logpdf(initial_dist(model),x[i])
+          # logw += -1*logpdf.(proposal.(xp),x)
+        end
     end
 
     # normalize initial weights
