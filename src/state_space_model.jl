@@ -127,7 +127,7 @@ end
 """
 unobserved component stochastic volatility
 
-x[t] ~ N(x[t-1],exp(0.5*σx[t]))
+x[t] ~ N(x[t-1],exp(0.5*σx[t-1]))
 y[t] ~ N(x[t],exp(0.5*σy[t]))
 
 σx[t] ~ N(σx[t-1],γ)
@@ -144,7 +144,6 @@ end
         
 function preallocate(model::StateSpaceModel{UCSV},N::Int64)
     return fill(zeros(SVector{3}),N)
-    #return zeros(Float64,N)
 end
 
 function transition(
@@ -154,14 +153,14 @@ function transition(
     γ  = model.parameters.γ
     x,σx,σy = x
 
-    # update log volatilities
-    σx += rand(Normal(0.0,γ))
-    σy += rand(Normal(0.0,γ))
+    ## update log volatilities
+    #σx += rand(Normal(0.0,γ))
+    #σy += rand(Normal(0.0,γ))
 
     return TupleProduct((
         Normal(x,exp(0.5*σx)),
-        Dirac(σx),
-        Dirac(σy)
+        Normal(σx,γ),
+        Normal(σy,γ)
     ))
 end
 
@@ -181,13 +180,13 @@ function initial_dist(
     x0 = model.parameters.x0
     σx,σy = model.parameters.σ0
     
-    # update log volatilities
-    σx += rand(Normal(0.0,γ))
-    σy += rand(Normal(0.0,γ))
+    ## update log volatilities
+    #σx += rand(Normal(0.0,γ))
+    #σy += rand(Normal(0.0,γ))
 
     return TupleProduct((
         Normal(x0,exp(0.5*σx)),
-        Dirac(σx),
-        Dirac(σy)
+        Normal(σx,γ),
+        Normal(σy,γ)
     ))
 end
