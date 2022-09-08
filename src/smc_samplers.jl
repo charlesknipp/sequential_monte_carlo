@@ -1,7 +1,7 @@
 export SMC,expected_parameters,density_tempered,smc²,smc²!
 
-mutable struct SMC{SSM,XT}
-    θ::Vector{Vector{Float64}}
+mutable struct SMC{SSM,XT,θT,KT}
+    θ::Vector{θT}
     ω::Vector{Float64}
 
     x::Vector{Vector{XT}}
@@ -18,6 +18,7 @@ mutable struct SMC{SSM,XT}
 
     model::SSM
     prior::Sampleable
+    kernel::KT
 
     rng::AbstractRNG
 end
@@ -41,16 +42,31 @@ function SMC(
     ess = 1.0*M
     ess_min = M*ess_threshold
 
-    MT = typeof(model)
     XT = eltype(x[1])
+    θT = eltype(θ)
+    
+    # Since Normal is way faster, it is preferred given univariate priors
+    if θT === Float64
+        mh_kernel = Normal
+    else
+        mh_kernel = MvNormal
+    end
+    KT = typeof(mh_kernel)
 
-    return SMC{MT,XT}(θ,ω,x,w,ess,ess_min,N,M,chain,logZ,model,prior,rng)
+    return SMC{SSM,XT,θT,KT}(θ,ω,x,w,ess,ess_min,N,M,chain,logZ,model,prior,mh_kernel,rng)
 end
 
 function expected_parameters(smc::SMC)
     _,ω,_ = normalize(smc.ω)
     weighted_sample = reduce(hcat,smc.θ.*ω)
     return sum(weighted_sample,dims=2)
+end
+
+function Base.show(io::IO,smc::SMC)
+    rounded_ess = round(smc.ess;digits=3)
+    expected_θ  = expected_parameters(smc)
+    print(io,"ess     = ",rounded_ess,"\nmean(θ) = ")
+    show(io,"text/plain",expected_θ)
 end
 
 function resample!(smc::SMC)
@@ -72,13 +88,16 @@ function rejuvenate!(smc::SMC,y::Vector{Float64},ξ::Float64,verbose::Bool)
     catθ = reduce(hcat,smc.θ)
     dθ   = (2.83^2)/length(smc.prior)
 
+    # this needs some TLC
     Σ = norm(cov(catθ')) < 1.e-12 ? 1.e-2*I : dθ*cov(catθ') + 1.e-10I
+    Σ = length(Σ) == 1 ? Σ[1] : Σ
+    
     if verbose @printf("\t[rejuvenating]") end
 
     Threads.@threads for m in 1:smc.M
         for _ in 1:smc.chain
             # currently only supports random walk
-            θ_prop = rand(smc.rng,MvNormal(smc.θ[m],Σ))
+            θ_prop = rand(smc.rng,smc.kernel(smc.θ[m],Σ))
 
             if insupport(smc.prior,θ_prop)
                 x_prop,w_prop,logZ_prop = log_likelihood(
