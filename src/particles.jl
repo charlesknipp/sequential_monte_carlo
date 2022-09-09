@@ -59,12 +59,12 @@ end
 
 function particle_filter!(
         rng::AbstractRNG,
-        states::Vector{Float64},
+        states::Vector{XT},
         weights::Vector{Float64},
         y::Float64,
         model::StateSpaceModel,
         proposal
-    )
+    ) where XT
 
     ## local vector for log weights
     logw = similar(weights)
