@@ -1,117 +1,108 @@
-export randTruncatedMvNormal,logpdfTruncatedMvNormal,ProgressBar,bisection
+export TupleProduct
+using PDMats
 
-using Printf
+# extend base operations for Distributions with static arrays
+@inline Base.:(-)(x::StaticArray,::Distributions.Zeros) = x
+@inline Base.:(-)(::Distributions.Zeros,x::StaticArray) = -x
+@inline Base.:(\)(a::PDMats.PDMat,x::StaticVector) = a.chol \ x
 
-function secant(
-        f::Function,x0::Float64,x1::Float64;
-        tol::AbstractFloat=1.e-12,maxiter::Int64=50
+# define square mahalanobis distance with static arrays
+@inline function Distributions.sqmahal(
+        d::MvNormal,
+        x::StaticArray
     )
-
-    for _ in 1:maxiter
-        y1 = f(x1)
-        y0 = f(x0)
-        x  = x1-y1*(x1-x0)/(y1-y0)
-
-        if abs(x-x1) < tol
-            return x
-        end
-
-        x0 = x1
-        x1 = x
-    end
-
-    # throw an error upon exceeding max_iters
-    error("Max iteration exceeded")
+    return Distributions.invquad(d.Σ,x-d.μ)
 end
 
-function bisection(
-        f::Function,lower_bound::Number,upper_bound::Number;
-        tol::AbstractFloat=1e-12,maxiter::Integer=50
+# define inverse quadratic form with static vectors and scaling matrices
+@inline function PDMats.invquad(
+        a::PDMats.ScalMat,
+        x::StaticVector
     )
+    return dot(x,x) / a.value
+end
 
-    f_lower_bound = f(lower_bound)
-    # f_lower_bound*f(upper_bound) <= 0 || error("No real root")
+# define inverse quadratic form with static vectors and positive definite
+# matrices
+@inline function PDMats.invquad(
+        a::PDMats.PDMat,
+        x::StaticVector
+    )
+    return dot(x,a\x)
+end
 
-    i = 0
-    midpoint = upper_bound
-
-    while upper_bound-lower_bound > tol
-        i += 1
-        i != maxiter || error("Max iteration exceeded")
-
-        midpoint   = (lower_bound+upper_bound)/2
-        f_midpoint = f(midpoint)
-
-        if f_midpoint == 0
-            break
-        elseif f_lower_bound*f_midpoint > 0
-            # Root is in the right half of [a,b]
-            lower_bound   = midpoint
-            f_lower_bound = f_midpoint
-        else
-            # Root is in the left half of [a,b]
-            upper_bound = midpoint
-        end
-    end
-
-    # this returns a value that will likely encourage resampling
-    return upper_bound
+# define inverse quadratic form with static vectors and positive definite
+# diagonal matrices
+@inline function PDMats.invquad(
+        a::PDMats.PDiagMat,
+        x::StaticVector
+    )
+    return PDMats.wsumsq(1 ./ a.diag, x)
 end
 
 
-mutable struct ProgressBar
-    # wrapped iterable
-    wrapped::Any
+struct Mixed <: ValueSupport end
 
-    # bar structure
-    width::Int64
-    current::Int64
+struct TupleProduct{N,S,V<:NTuple{N,UnivariateDistribution}} <: MultivariateDistribution{S}
+    v::V
 
-    # time variables
-    start_time::UInt
-    elapsed_time::UInt
-
-    # misc variables
-    printing_delay::UInt
-
-    function ProgressBar(wrapped,width::Int64=20,delay::Number=.05)
-        time  = time_ns()
-        delay = trunc(UInt,delay*1e9)
-
-        new(wrapped,width,0,time,time,delay)
+    # define a default constructor conditional on cumulative dist types V
+    function TupleProduct(v::V) where {N,V<:NTuple{N,UnivariateDistribution}}
+        all(Distributions.value_support(typeof(d)) == Discrete for d in v) &&
+            return new{N,Discrete,V}(v)
+        all(Distributions.value_support(typeof(d)) == Continuous for d in v) &&
+            return new{N,Continuous,V}(v)
+        return new{N,Mixed,V}(v)
     end
 end
 
-function update(pb::ProgressBar)
-    # the bar should resemble this: [######    ] 10 seconds
-    n_cells  = trunc(Int,pb.current*(pb.width/length(pb.wrapped)))
-    progress = repeat("#",n_cells)
-    space    = repeat(" ",abs(pb.width-n_cells))
+TupleProduct(d::Distribution...) = TupleProduct(d)
+Base.length(d::TupleProduct{N}) where N = N
 
-    # format time elapsed
-    time_elapsed = (pb.elapsed_time-pb.start_time)*1e-9
-    m,s = divrem(round(Int,time_elapsed),60)
-    time_elapsed = @sprintf("%02d:%02d",m,s)
-
-    print("\r")
-    print("[",progress,space,"] ",time_elapsed)
+# define basic random generation for this type
+@generated function Distributions._rand!(
+        rng::AbstractRNG,
+        d::TupleProduct{N},
+        x::AbstractVector{<:Real}
+    ) where N
+    return quote
+        Base.Cartesian.@nexprs $N i->(x[i] = rand(rng,d.v[i]))
+        x
+    end
 end
 
-
-# change it's behavior in for loops as to not mess up the loop
-function Base.iterate(pb::ProgressBar)
-    pb.start_time = time_ns() - pb.printing_delay
-    pb.current = 0
-
-    update(pb)
-    return iterate(pb.wrapped)
+# define random generation to work with static vectors
+@generated function Random.rand(
+        rng::AbstractRNG,
+        d::TupleProduct{N}
+    ) where N
+    return quote
+        SVector(Base.Cartesian.@ntuple $N i->(rand(rng,d.v[i])))
+    end
 end
 
-function Base.iterate(pb::ProgressBar,state)
-    pb.elapsed_time = time_ns()
-    pb.current += 1
-    state = iterate(pb.wrapped,state)
-
-    update(pb)
-    return state
+@generated function Distributions._logpdf(
+        d::TupleProduct{N},
+        x::AbstractVector{<:Real}
+    ) where N
+    return :(Base.Cartesian.@ncall $N Base.:+ i->logpdf(d.v[i],x[i]))
 end
+
+# extend static array support to regular product distributions as well
+@generated function Distributions._logpdf(
+        d::Product,
+        x::StaticVector{N}{<:Real}
+    ) where N
+    return :(Base.Cartesian.@ncall $N Base.:+ i->logpdf(d.v[i],x[i]))
+end
+
+# define summary statistics for tuple products
+Distributions.mean(d::TupleProduct) = vcat(mean.(d.v)...)
+Distributions.var(d::TupleProduct)  = vcat(var.(d.v)...)
+Distributions.cov(d::TupleProduct)  = Diagonal(var(d))
+
+# define the entropy
+Distributions.entropy(d::TupleProduct) = sum(entropy, d.v)
+
+# further extend base methods
+Base.extrema(d::TupleProduct) = minimum.(d.v), maximum.(d.v)

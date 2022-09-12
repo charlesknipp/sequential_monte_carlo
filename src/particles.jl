@@ -1,99 +1,132 @@
-export Particles,reweight,ParticleSet,ESS,resample
+## PARTICLES ##################################################################
 
-# try to make the Particles type immutable, which may entail getting rid of the
-# ParticleSet class
+export normalize,resample,log_likelihood
 
-const ParticleType = Union{Float64,Vector{Float64},Vector{Matrix{Float64}}}
+function normalize(logw::Vector{Float64})
+    maxw = maximum(logw)
+    w    = exp.(logw.-maxw)
+    sumw = sum(w)
 
-mutable struct Particles{T<:ParticleType}
-    # necessary parameters
-    x::Vector{T}
-    logw::Vector{Float64}
+    logμ = maxw + log(sumw) - log(length(logw))
+    w    = w/sumw
+    ess  = 1.0/sum(w.^2)
 
-    # other parameters, may be inefficient to calculate them at every call
-    w::Vector{Float64}
-    ess::Float64
-    logμ::Float64
+    return (logμ,w,ess)
+end
 
-    function Particles(x::Vector{T},logw::Vector{Float64}) where T <: ParticleType
-        # account for underflows in weights more thoroughly such that if logw
-        # === NaN then set logw = -Inf
-        maxw = maximum(logw)
-        w    = exp.(logw.-maxw)
-        sumw = sum(w)
+function resample(rng::AbstractRNG,w::Vector{Float64})
+    N = length(w)
+    return sample(rng,1:N,Weights(w),N)
+end
 
-        logμ = maxw + log(sumw/length(logw))
-        w    = w/sumw
-        ess  = 1.0/sum(w.^2)
-        
-        new{T}(x,logw,w,ess,logμ)
+resample(w::Vector{Float64}) = resample(Random.GLOBAL_RNG,w)
+
+## PARTICLE FILTERS ###########################################################
+
+export particle_filter,particle_filter!,bootstrap_filter,bootstrap_filter!
+
+# initialize the particle filter
+function particle_filter(
+        rng::AbstractRNG,
+        N::Int64,
+        y::Float64,
+        model::StateSpaceModel,
+        proposal
+    )
+
+    # initialize states and reweight
+    x    = preallocate(model,N)
+    logw = zeros(Float64,N)
+    
+    ## depracated in favor of preallocation
+    # x    = rand(rng,initial_dist(model),N)
+    # logw = logpdf.(observation.(Ref(model),x),y)
+    for i in 1:N
+        x[i]    = rand(rng,initial_dist(model))
+        logw[i] = logpdf(observation(model,x[i]),y)
+    
+        if !isnothing(proposal)
+            logw[i] += logpdf(initial_dist(model),x[i])
+          # logw += -1*logpdf.(proposal.(xp),x)
+        end
     end
+
+    # normalize initial weights
+    logμ,w,_ = normalize(logw)
+
+    return x,w,logμ
 end
 
-function Particles(particles::Vector{T}) where {T<:ParticleType}
-    N_particles = length(particles)
-    log_weights = fill(-1*log(N_particles),N_particles)
+function particle_filter!(
+        rng::AbstractRNG,
+        states::Vector{XT},
+        weights::Vector{Float64},
+        y::Float64,
+        model::StateSpaceModel,
+        proposal
+    ) where XT
 
-    return Particles(particles,log_weights)
-end
+    ## local vector for log weights
+    logw = similar(weights)
 
-function Particles(N::Int64,dims::Int64=1)
-    particles = (dims == 1) ? fill(0.0,N) : fill(zeros(Float64,dims),N)
-    log_weights = fill(-1*log(N),N)
+    ## resample
+    a  = resample(rng,weights)
+    x  = states
+    xp = deepcopy(x[a])
 
-    return Particles(particles,log_weights)
-end
+    ## propagate
+    for i in 1:length(states)
+        x[i]     = rand(rng,transition(model,xp[i]))
+        logw[i]  = logpdf(observation(model,x[i]),y)
 
-Base.length(particles::Particles) = length(particles.logw)
-
-function reweight(particles::Particles,log_weights::Vector{Float64})
-    particles = particles.x
-
-    # this returns a new object, which makes mutability of this struct obsolete
-    return Particles(particles,log_weights)
-end
-
-
-mutable struct ParticleSet{T<:ParticleType}
-    p::Vector{Particles{T}}
-end
-
-function ParticleSet(N::Int64,dim::Int64,T::Int64)
-    particle_set = [Particles(N,dim) for _ in 1:T]
-
-    return ParticleSet(particle_set)
-end
-
-Base.length(ps::ParticleSet) = length(ps.p)
-
-function ESS(logx::Vector{Float64})
-    max_logx = maximum(logx)
-    x_scaled = exp.(logx.-max_logx)
-
-    ESS = sum(x_scaled)^2 / sum(x_scaled.^2)
-    if ESS == NaN; ESS = 0.0 end
-
-    return ESS
-end
-
-function resample(p::Particles,B::Number)
-    N = length(p.x)
-
-    if p.ess < B*N
-        a = wsample(1:N,p.w,N)
-        x = p.x[a]
-
-        return Particles(x)
-    else
-        return p
+        if !isnothing(proposal)
+            logw[i] += logpdf(transition(model,xp[i]),x[i])
+            logw[i] += -1*logpdf(proposal(xp[i]),x[i])
+        end
     end
+
+    ## reweight
+    return normalize(logw)
 end
 
-function resample(p::Particles)
-    N = length(p.x)
+# initialize the bootstrap filter
+function bootstrap_filter(
+        rng::AbstractRNG,
+        N::Int64,
+        y::Float64,
+        model::StateSpaceModel
+    )
+    ## set proposal to nothing
+    return particle_filter(rng,N,y,model,nothing)
+end
 
-    a = wsample(1:N,p.w,N)
-    x = p.x[a]
+function bootstrap_filter!(
+        rng::AbstractRNG,
+        states::Vector{Float64},
+        weights::Vector{Float64},
+        y::Float64,
+        model::StateSpaceModel
+    )
+    ## set proposal to nothing
+    return particle_filter!(rng,states,weights,y,model,nothing)
+end
 
-    return Particles(x)
+# there is a better way to write this... no excuses
+function log_likelihood(
+        rng::AbstractRNG,
+        N::Int64,
+        y::Vector{Float64},
+        model::StateSpaceModel,
+        proposal=nothing
+    )
+    logZ = 0.0
+
+    x,w,logZ = particle_filter(rng,N,y[1],model,proposal)
+
+    for t in 2:length(y)
+        logμ,w,_ = particle_filter!(rng,x,w,y[t],model,proposal)
+        logZ    += logμ
+    end
+
+    return x,w,logZ
 end

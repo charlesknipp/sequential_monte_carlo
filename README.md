@@ -1,92 +1,112 @@
-# Sequential Monte Carlo Methods
+## Density Tempered Particle Filter
 
-This module is intended for personal development and understanding of sequential monte carlo techniques and algorithms. Supported models include only Gaussian dynamic linear models, but support for more is feasible and likely will be implemented in future iterations of this module.
+Based on the algorithm presented in [(Duan & Fulop, 2013)](https://www.tandfonline.com/doi/pdf/10.1080/07350015.2014.940081), the density tempered particle filter estimates the joint posterior of latent states and model parameters by way of a tempering scheme.
 
-## Creating a model
+Consider a state space model with latent states `x[t]` and observations `y[t]`; let vector `θ` parameterize the transition density `f(x[t]|θ)` and the observation density `g(x[t]|θ)`. For parameter estimation, let `prior` represent the prior of `θ` with a tempering scheme defined by a sequence of `ξ`s. For the filters themselves, let `M` represent the number of `θ` particles and `N` be the number of state particles.
 
-Built into the module, I define a class called `NDLM` which describes the parameters of a Normal dynamic linear model (NDLM for short, hence the name). This is by design since certain algorithms test the fit of estimated model parameters against a known vector of noise typically denoted as `y` throughout this program. To create a model, and simulate `T` periods of data, define the model and plug it in to the `simulate()` function defined for `NDLM` object types.
 
-```julia
-> sim = NDLM(A=0.8,B=1.0,Q=1.0,R=1.0)
-> x,y = simulate(T=200,model=sim)
-```
+### Algorithm
 
-Note, `x0` and `Σ0` are set around the origin with unit deviation, but these can be inputs to an `NDLM` as well.
-
-## Filters
-
-If the name doesn't give it away, a large part of this module is filtering. Which can be broken down into two categories: observed parameters or unobserved parameters. For the first category there are currently three working filters: a Kalman Filter, a bootstrap filter, and an auxiliary particle filter. Likewise, we define two more filters: the density tempered marginalized sequential monte carlo sampler (J. Duan and A. Fulop) as well as SMC² (N. Chopin).
-
-### Kalman Filter
-
-To demonstrate the use of the Kalman filter, let us use the model we simulated above along with the function `kalmanFilter()` to output the quantiles of `x` at each period.
+Accompanying this algorithm are a selection of helper functions necessary to understanding the particle filter. The first is a simple calculation of the effective sample size (ESS) specifically using the weighting scheme from [(Duan & Fulop, 2013)](https://www.tandfonline.com/doi/pdf/10.1080/07350015.2014.940081).
 
 ```julia
-> kalmanFilter(y,sim)
-100×3 Array{Float64,2}:
-  -0.47693    0.00000    0.47694
-  -0.41495    0.09382    0.60258
-  -1.17056   -0.65821   -0.14586
-  -0.94360   -0.43084    0.08192
-   ⋮
-  -1.49669   -0.98388   -0.47107
-  -2.06760   -1.55479   -1.04198
-  -0.84181   -0.32899    0.18382
+function ess(Δξ,Z)
+    s = [Z[i]^(Δξ) for i in 1:M]
+    return sum(s)^2 / sum([s[i]^2 for i in 1:M])
+end
 ```
 
-![kfplot](https://user-images.githubusercontent.com/32943413/138187022-23bc1d4d-37d7-417a-a640-e9c6ea2ddb4d.png)
-
-### Bootstrap Filter
-
-The Bootstrap Filter is defined by the function `boostrapFilter()` which outputs a tuple of 3 items: a vector of the normalizing constants `Z`, the particle cloud generated at all periods `xs`, and the quantiles of the particle cloud at each period. Again we use the simulations from above to output the quantiles.
+Subsequently, we must define a sequential Monte Carlo method to calculate the marginal densities `Z`, as noted in the algorithm. Specifically, we employ a bootstrap filter for its simplicity and effectiveness.
 
 ```julia
-> boostrapFilter(1000,y,sim)[3]
-100×3 Array{Float64,2}:
-  -0.59210    0.00624    0.62103
-  -1.17245   -0.71156   -0.20154
-   0.28959    0.80968    1.42300
-   ⋮
-   0.94486    1.53216    2.08224
-  -1.02793   -0.52479   -0.06452
-  -0.95006   -0.37365    0.10438
+function bootstrap_filter(N,y,θ)
+    xt = rand(μ(θ),N)
+    
+    for t in 1:T
+        # propagate
+        for i in 1:N
+            xt[i] = rand(f(xt[i],θ))
+            w[i]  = pdf(g(xt[i],θ),y[t])
+        end
+
+        # normalize weights
+        Z[t] = mean(w)
+        w   /= sum(w)
+
+        # resample
+        a  = wsample(1:N,w,N)
+        xt = xt[a]
+    end
+
+    return reduce(*,Z)
+end
 ```
 
-![bfplot](https://user-images.githubusercontent.com/32943413/138186951-8beef962-f7ef-4055-b2c2-713f5fa273b8.png)
-
-### Auxiliary Particle Filter
-
-The Auxiliary Particle Filter is defined by the function `auxiliaryParticleFilter()`, and the process is identicle to the previous filter.
+Given the prerequisite functions, we have sufficient background to define the main algorithm. Following is a simplified, albeit honest, pseudocode of the filter. For brevity sake, certain details are omitted; however the following description is an accurate representation of [(Duan & Fulop, 2013)](https://www.tandfonline.com/doi/pdf/10.1080/07350015.2014.940081)s intended proces.
 
 ```julia
-> auxiliaryParticleFilter(1000,y,model)[3]
-100×3 Array{Float64,2}:
-  -0.59210    0.00624    0.62103
-  -1.17245   -0.71156   -0.20154
-   0.28959    0.80968    1.42300
-   ⋮
-   0.94486    1.53216    2.08224
-  -1.02793   -0.52479   -0.06452
+# (2.2.1) initialize the particle set
+for i in 1:M
+    θ[i] = rand(prior)
+    Z[i] = bootstrap_filter(N,y,θ[i])
+    S[i] = 1/M
+end
 
-  -0.95006   -0.37365    0.10438
+# begin the tempering sequence at 0
+ξ = 0.0
+
+while ξ < 1
+    # (2.2.2) find optimal ξ and reweight
+    Δξ = optimize(Δξ -> ess(Δξ,Z)-(M/2))
+    ξ += Δξ
+
+    S  = [Z[i]^(Δξ) for i in 1:M]
+    S /= sum(S)
+
+    if ess(Δξ) < M/2
+        # (2.2.3) resample particles
+        a = wsample(1:M,S,M)
+        θ = θ[a]
+        Z = Z[a]
+
+        # (2.2.4) moving the particles
+        Σ = cov(θ')
+
+        for _ in 1:mcmc_steps
+            for i in 1:M
+                prop_θ = rand(MvNormal(θ[i],Σ))
+                prop_Z = bootstrap_filter(N,y,prop_θ)
+
+                α  = (prop_Z^ξ)*pdf(prior,prop_θ)
+                α /= (Z[i]^ξ)*pdf(prior,θ[i])
+
+                if rand() ≤ minimum([1.0,α])
+                    θ[i] = prop_θ
+                    Z[i] = prop_Z
+                end
+            end
+        end
+    end
+end
 ```
 
-![apfplot](https://user-images.githubusercontent.com/32943413/138186939-70e7350f-dbbb-4899-94f6-472c8bfe6b49.png)
+It should be noted that the MCMC kernel is a random walk from the currently observed particle `θ[i]` with a given covariance `Σ` determined after each new choice of `ξ`. As such, the jump kernel has a symmetric distribution in which `h(θ[i]|prop_θ)` is actually equal to its counterpart `h(prop_θ|θ[i])`, thus eliminating it from the acceptance ratio `α`.
 
-### Comparing Filters
+An additional point of interest are the particle weights `S`. In (Duan & Fulop, 2013)](https://www.tandfonline.com/doi/pdf/10.1080/07350015.2014.940081) weights are carried over from the previous iteration as follows:
 
-If we directly compare the previous three filters we get the following:
+```julia
+S  = [S[i]*(Z[i]^Δξ) for i in 1:M]
+S /= sum(S)
+```
 
-![cumplot](https://user-images.githubusercontent.com/32943413/138186977-3dd29595-34c7-4dc5-9371-16140bebaa35.png)
+And reset to `1/M` following each resmapling step. It is clear to see this is redundant since resampling occurs at every step; maximal selection of `ξ` is performed via a root finding algorithm, and thus will always result in an ESS which requires resampling. The resulting particles are equally weighted and make no difference in the calculation of the new weights.
 
+## SMC²
 
-### Density Tempered Marginalized Sequential Monte Carlo
+Based on the algorithm presented in [Chopin, 2012](https://arxiv.org/pdf/1101.1528.pdf), SMC² performs online estimation of the joint posterior for latent states and model paramters; the process parallels methods akin to particle Markov Chain Monte Carlo (PMCMC) and iterated batch importance sampling (IBIS).
 
-This work in progress algorithm was inspired by the paper of the same name by J. Duan and A. Fulop, and is implemented as the function `densityTemperedSMC()`. As mentioned this is a work in progress and while it compiles, the parameters that it outputs are only in rough neighborhoods of where they are expected to be.
+Consider a state space model with latent states `x[t]` and observations `y[t]`; let vector `θ` parameterize the transition density `f(x[t]|θ)` and the observation density `g(x[t]|θ)`. For parameter estimation, let `prior` represent the prior of `θ`. For the filters themselves, let `M` represent the number of `θ` particles and `N` be the number of state particles.
 
+### Algorithm
 
-### SMC²
-
-As the algorithm's creater describes it, SMC² is "an efficient algorithm for sequential analysis of state space models". The eponymous paper by N. Chopin outlines these efficiencies by considering iterative batch sampling (IBIS) in conjuction with Monte Carlo methods which transform the analytical intractibility of IBIS into a very feasible, yet memory efficient algorithm. This program defines the function `SMC²()` to represent Chopin's idea.
-
-Like the previous algorithm, this is still a work in progress.
+...

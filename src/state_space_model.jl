@@ -1,89 +1,192 @@
-export StateSpaceModel,LinearGaussian,simulate,ModelParameters,AbstractSSM
+export StateSpaceModel,LinearGaussian,StochasticVolatility,UCSV
+export simulate,transition,observation,initial_dist
 
-abstract type AbstractSSM end
 abstract type ModelParameters end
 
-struct StateSpaceModel <: AbstractSSM
-    # define general structure using functions
-    transition::Function
-    observation::Function
-    
-    # need the dims for initializing states...maybe...
-    dim_x::Int64
-    dim_y::Int64
+struct StateSpaceModel{T<:ModelParameters}
+    parameters::T
+    dims::Tuple{Int64,Int64}
 end
 
+function simulate(rng::AbstractRNG,model::StateSpaceModel,T::Int64)
+    x_dim,y_dim = model.dims
 
-# for now assume x0 and Σ0 are known
-struct LinearGaussian <: ModelParameters
+    x_type = x_dim == 1 ? Float64 : SVector{x_dim,Float64}
+    y_type = y_dim == 1 ? Float64 : SVector{y_dim,Float64}
 
-    A::Union{Float64,Matrix{Float64}}
-    B::Union{Float64,Matrix{Float64}}
+    x = Vector{x_type}(undef,T)
+    y = Vector{y_type}(undef,T)
 
-    Q::Union{Float64,Matrix{Float64}}
-    R::Union{Float64,Matrix{Float64}}
-
-    # implicitly defined by the constructor
-    dim_x::Int64
-    dim_y::Int64
-
-    function LinearGaussian(A,B,Q,R)
-        # determine the dimensions
-        dim_x,dim_y = size(A,1),size(B,1)
-
-        @assert dim_x == size(A,2) "A is not a square matrix"
-
-        @assert size(Q,1) == size(Q,2) "Q is not a square matrix"
-        @assert size(R,1) == size(R,2) "R is not a square matrix"
-
-        @assert dim_x == size(Q,1) "A,Q dimension mismatch"
-        @assert dim_y == size(R,1) "B,R dimension mismatch"
-
-        @assert issymmetric(Q) "Q is not symmetric"
-        @assert issymmetric(R) "R is not symmetric"
-
-        @assert isposdef(Q) "Q is not positive definite"
-        @assert isposdef(R) "R is not positive definite"
-
-        # construct the new object
-        new(A,B,Q,R,dim_x,dim_y)
-    end
-end
-
-
-function StateSpaceModel(params::LinearGaussian)
-    # import parameters
-    A,B = params.A,params.B
-    Q,R = params.Q,params.R
-
-    dim_x = params.dim_x
-    dim_y = params.dim_y
-
-    # depending on the type of input set the kernel
-    Kx = (dim_x == 1) ? Normal : MvNormal
-    Ky = (dim_y == 1) ? Normal : MvNormal
-
-    f(xt) = Kx(A*xt,Q)
-    g(xt) = Ky(B*xt,R)
-
-    return StateSpaceModel(f,g,dim_x,dim_y)
-end
-
-
-function simulate(model::StateSpaceModel,T::Int64)
-    y = (model.dim_y == 1) ? 0.0 : zeros(Float64,model.dim_y)
-    y = fill(y,T)
-    
-    x = (model.dim_x == 1) ? 0.0 : zeros(Float64,model.dim_x)
-    x = fill(x,T)
-
-    # initialize for x0
-    x[1] = rand(model.transition(x[1]))
+    x[1] = rand(rng,initial_dist(model))
+    y[1] = rand(rng,observation(model,x[1]))
 
     for t in 2:T
-        x[t] = rand(model.transition(x[t-1]))
-        y[t] = rand(model.observation(x[t]))
+        x[t] = rand(rng,transition(model,x[t-1]))
+        y[t] = rand(rng,observation(model,x[t]))
     end
 
-    return (x,y)
+    return x,y
+end
+
+simulate(mod::StateSpaceModel,T::Int64) = simulate(Random.GLOBAL_RNG,mod,T)
+
+
+"""
+univariate linear gaussian
+
+x[t] ~ N(A*x[t-1],Q)
+y[t] ~ N(B*x[t],R)
+"""
+struct LinearGaussian <: ModelParameters
+    # coefficients
+    A::Float64
+    B::Float64
+
+    # variances
+    Q::Float64
+    R::Float64
+
+    # initial distribution
+    x0::Float64
+end
+
+function preallocate(model::StateSpaceModel{LinearGaussian},N::Int64)
+    return zeros(Float64,N)
+end
+
+function transition(
+        model::StateSpaceModel{LinearGaussian},
+        x::Float64
+    )
+    A = model.parameters.A
+    Q = model.parameters.Q
+
+    return Normal(A*x,Q)
+end
+
+function observation(
+        model::StateSpaceModel{LinearGaussian},
+        x::Float64
+    )
+    B = model.parameters.B
+    R = model.parameters.R
+
+    return Normal(B*x,R)
+end
+
+function initial_dist(model::StateSpaceModel{LinearGaussian})
+    return Normal(model.parameters.x0,model.parameters.Q)
+end
+
+"""
+stochastic volatility
+
+x[t] ~ N(μ+ρ*(μ-x[t-1]),σ)
+y[t] ~ N(0,exp(0.5*x[t]))
+"""
+struct StochasticVolatility <: ModelParameters
+    # unconditional mean and speed
+    μ::Float64
+    ρ::Float64
+
+    # volatility
+    σ::Float64
+end
+
+function preallocate(model::StateSpaceModel{StochasticVolatility},N::Int64)
+    return zeros(Float64,N)
+end
+
+function transition(
+        model::StateSpaceModel{StochasticVolatility},
+        x::Float64
+    )
+    μ = model.parameters.μ
+    ρ = model.parameters.ρ
+    σ = model.parameters.σ
+
+    return Normal(μ+ρ*(x-μ),σ)
+end
+
+function observation(
+        model::StateSpaceModel{StochasticVolatility},
+        x::Float64
+    )
+    return Normal(0.0,exp(0.5*x))
+end
+
+function initial_dist(model::StateSpaceModel{StochasticVolatility})
+    μ = model.parameters.μ
+    ρ = model.parameters.ρ
+    σ = model.parameters.σ
+
+    return Normal(μ,σ/sqrt(1.0-ρ^2))
+end
+
+
+"""
+unobserved component stochastic volatility
+
+x[t] ~ N(x[t-1],exp(0.5*σx[t-1]))
+y[t] ~ N(x[t],exp(0.5*σy[t]))
+
+σx[t] ~ N(σx[t-1],γ)
+σy[t] ~ N(σy[t-1],γ)
+"""
+struct UCSV <: ModelParameters
+    # smoothing parameter
+    γ::Float64
+
+    # starting value
+    x0::Float64
+    σ0::Tuple{Float64,Float64}
+end
+        
+function preallocate(model::StateSpaceModel{UCSV},N::Int64)
+    return fill(zeros(SVector{3}),N)
+end
+
+function transition(
+        model::StateSpaceModel{UCSV},
+        x::SVector{3,Float64}
+    )
+    γ  = model.parameters.γ
+    x,σx,σy = x
+
+    ## update log volatilities
+    #σx += rand(Normal(0.0,γ))
+    #σy += rand(Normal(0.0,γ))
+
+    return TupleProduct((
+        Normal(x,exp(0.5*σx)),
+        Normal(σx,γ),
+        Normal(σy,γ)
+    ))
+end
+
+function observation(
+        model::StateSpaceModel{UCSV},
+        x::SVector{3,Float64}
+    )
+    x,_,σy = x
+
+    return Normal(x,exp(0.5*σy))
+end
+
+function initial_dist(
+        model::StateSpaceModel{UCSV}
+    )
+    γ  = model.parameters.γ
+    x0 = model.parameters.x0
+    σx,σy = model.parameters.σ0
+    
+    ## update log volatilities
+    #σx += rand(Normal(0.0,γ))
+    #σy += rand(Normal(0.0,γ))
+
+    return TupleProduct((
+        Normal(x0,exp(0.5*σx)),
+        Normal(σx,γ),
+        Normal(σy,γ)
+    ))
 end
