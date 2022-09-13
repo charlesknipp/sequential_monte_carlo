@@ -1,4 +1,4 @@
-export StateSpaceModel,LinearGaussian,StochasticVolatility,UCSV
+export StateSpaceModel,LinearGaussian,StochasticVolatility,UC,UCSV
 export simulate,transition,observation,initial_dist
 
 abstract type ModelParameters end
@@ -123,6 +123,52 @@ function initial_dist(model::StateSpaceModel{StochasticVolatility})
     return Normal(μ,σ/sqrt(1.0-ρ^2))
 end
 
+"""
+basic unobserved component model
+
+x[t] ~ N(x[t-1],σx)
+y[t] ~ N(x[t],σy)
+
+cov(σx,σy) == 0
+"""
+struct UC <: ModelParameters
+    # initial trend value
+    x0::Float64
+
+    # uncorrelated disturbances
+    σy::Float64
+    σx::Float64
+end
+
+function preallocate(model::StateSpaceModel{UC},N::Int64)
+    return zeros(Float64,N)
+end
+
+function transition(
+        model::StateSpaceModel{UC},
+        x::Float64
+    )
+    σx = model.parameters.σx
+
+    return Normal(x,σx)
+end
+
+function observation(
+        model::StateSpaceModel{UC},
+        x::Float64
+    )
+    σy = model.parameters.σy
+
+    return Normal(x,σy)
+end
+
+function initial_dist(
+        model::StateSpaceModel{UC}
+    )
+    σx = model.parameters.σx
+    x0 = model.parameters.x0
+    return Normal(x0,σx)
+end
 
 """
 unobserved component stochastic volatility
