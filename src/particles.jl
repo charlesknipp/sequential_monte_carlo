@@ -14,12 +14,12 @@ function normalize(logw::Vector{Float64})
     return (logμ,w,ess)
 end
 
-function resample(rng::AbstractRNG,w::Vector{Float64})
+function resample(w::Vector{Float64})
     N = length(w)
-    return sample(rng,1:N,Weights(w),N)
+    return sample(1:N,Weights(w),N)
 end
 
-resample(w::Vector{Float64}) = resample(Random.GLOBAL_RNG,w)
+#resample(w::Vector{Float64}) = resample(Random.GLOBAL_RNG,w)
 
 ## PARTICLE FILTERS ###########################################################
 
@@ -27,7 +27,6 @@ export particle_filter,particle_filter!,bootstrap_filter,bootstrap_filter!
 
 # initialize the particle filter
 function particle_filter(
-        rng::AbstractRNG,
         N::Int64,
         y::Float64,
         model::StateSpaceModel,
@@ -42,7 +41,7 @@ function particle_filter(
     # x    = rand(rng,initial_dist(model),N)
     # logw = logpdf.(observation.(Ref(model),x),y)
     for i in 1:N
-        x[i]    = rand(rng,initial_dist(model))
+        x[i]    = rand(initial_dist(model))
         logw[i] = logpdf(observation(model,x[i]),y)
     
         if !isnothing(proposal)
@@ -58,7 +57,6 @@ function particle_filter(
 end
 
 function particle_filter!(
-        rng::AbstractRNG,
         states::Vector{XT},
         weights::Vector{Float64},
         y::Float64,
@@ -70,13 +68,13 @@ function particle_filter!(
     logw = similar(weights)
 
     ## resample
-    a  = resample(rng,weights)
+    a  = resample(weights)
     x  = states
     xp = deepcopy(x[a])
 
     ## propagate
     for i in 1:length(states)
-        x[i]     = rand(rng,transition(model,xp[i]))
+        x[i]     = rand(transition(model,xp[i]))
         logw[i]  = logpdf(observation(model,x[i]),y)
 
         if !isnothing(proposal)
@@ -91,29 +89,26 @@ end
 
 # initialize the bootstrap filter
 function bootstrap_filter(
-        rng::AbstractRNG,
         N::Int64,
         y::Float64,
         model::StateSpaceModel
     )
     ## set proposal to nothing
-    return particle_filter(rng,N,y,model,nothing)
+    return particle_filter(N,y,model,nothing)
 end
 
 function bootstrap_filter!(
-        rng::AbstractRNG,
         states::Vector{Float64},
         weights::Vector{Float64},
         y::Float64,
         model::StateSpaceModel
     )
     ## set proposal to nothing
-    return particle_filter!(rng,states,weights,y,model,nothing)
+    return particle_filter!(states,weights,y,model,nothing)
 end
 
 # there is a better way to write this... no excuses
 function log_likelihood(
-        rng::AbstractRNG,
         N::Int64,
         y::Vector{Float64},
         model::StateSpaceModel,
@@ -121,10 +116,10 @@ function log_likelihood(
     )
     logZ = 0.0
 
-    x,w,logZ = particle_filter(rng,N,y[1],model,proposal)
+    x,w,logZ = particle_filter(N,y[1],model,proposal)
 
     for t in 2:length(y)
-        logμ,w,_ = particle_filter!(rng,x,w,y[t],model,proposal)
+        logμ,w,_ = particle_filter!(x,w,y[t],model,proposal)
         logZ    += logμ
     end
 

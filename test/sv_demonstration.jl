@@ -63,7 +63,7 @@ x,y = simulate(sv_mod(θ),T)
 
 
 ## density tempered
-sv_dt_smc = SMC(Random.GLOBAL_RNG,512,1024,sv_mod,sv_prior,3,0.5)
+sv_dt_smc = SMC(512,1024,sv_mod,sv_prior,3,0.5)
 dt_plot_1 = plot_histograms(sv_dt_smc,["μ","ρ","σ"])
 
 density_tempered(sv_dt_smc,y)
@@ -73,7 +73,7 @@ dt_plot_2 = plot_histograms(sv_dt_smc,["μ","ρ","σ"])
 
 
 ## smc²
-sv_smc² = SMC(Random.GLOBAL_RNG,512,512,sv_mod,sv_prior,3,0.5)
+sv_smc² = SMC(512,512,sv_mod,sv_prior,3,0.5)
 smc²(sv_smc²,y)
 
 

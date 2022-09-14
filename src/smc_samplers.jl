@@ -19,12 +19,9 @@ mutable struct SMC{SSM,XT,θT,KT}
     model::SSM
     prior::Sampleable
     kernel::KT
-
-    rng::AbstractRNG
 end
 
 function SMC(
-        rng::AbstractRNG,
         N::Int64,M::Int64,
         model::SSM,
         prior::Sampleable,
@@ -32,7 +29,7 @@ function SMC(
         ess_threshold::Float64
     ) where SSM
 
-    θ = map(m -> rand(rng,prior),1:M)
+    θ = map(m -> rand(prior),1:M)
     ω = (1/M)*ones(Float64,M)
 
     x = fill(preallocate(model(θ[1]),N),M)
@@ -53,7 +50,7 @@ function SMC(
     end
     KT = typeof(mh_kernel)
 
-    return SMC{SSM,XT,θT,KT}(θ,ω,x,w,ess,ess_min,N,M,chain,logZ,model,prior,mh_kernel,rng)
+    return SMC{SSM,XT,θT,KT}(θ,ω,x,w,ess,ess_min,N,M,chain,logZ,model,prior,mh_kernel)
 end
 
 function expected_parameters(smc::SMC)
@@ -70,7 +67,7 @@ function Base.show(io::IO,smc::SMC)
 end
 
 function resample!(smc::SMC)
-    a = resample(smc.rng,smc.ω)
+    a = resample(smc.ω)
 
     # reindex the parameter particles
     smc.θ = smc.θ[a]
@@ -86,22 +83,22 @@ function rejuvenate!(smc::SMC,y::Vector{Float64},ξ::Float64,verbose::Bool)
 
     # define the PMMH kernel
     catθ = reduce(hcat,smc.θ)
-    dθ   = (2.83^2)/length(smc.prior)
+    #dθ   = (2.83^2)/length(smc.prior)
+    dθ = 1.0
 
     # this needs some TLC
     Σ = norm(cov(catθ')) < 1.e-12 ? 1.e-2*I : dθ*cov(catθ') + 1.e-10I
-    Σ = length(Σ) == 1 ? Σ[1] : Σ
+    Σ = length(smc.prior) == 1 ? Σ[1] : Σ
     
     if verbose @printf("\t[rejuvenating]") end
 
     Threads.@threads for m in 1:smc.M
         for _ in 1:smc.chain
             # currently only supports random walk
-            θ_prop = rand(smc.rng,smc.kernel(smc.θ[m],Σ))
+            θ_prop = rand(smc.kernel(smc.θ[m],Σ))
 
             if insupport(smc.prior,θ_prop)
                 x_prop,w_prop,logZ_prop = log_likelihood(
-                    smc.rng,
                     smc.N,
                     y,
                     smc.model(θ_prop)
@@ -167,7 +164,6 @@ Implementation of Duan & Fulop's density tempered particle filter.
 function density_tempered(smc::SMC,y::Vector{Float64},verbose=true)
     Threads.@threads for m in 1:smc.M
         smc.x[m],smc.w[m],smc.logZ[m] = log_likelihood(
-            smc.rng,
             smc.N,
             y,
             smc.model(smc.θ[m])
@@ -234,7 +230,6 @@ Initialization of Chopin's SMC² at time `t = 1`.
 function smc²(smc::SMC,y::Vector{Float64})
     for m in 1:smc.M
         smc.x[m],smc.w[m],smc.ω[m] = particle_filter(
-            smc.rng,
             smc.N,
             y[1],
             smc.model(smc.θ[m]),
@@ -268,7 +263,6 @@ function smc²!(smc::SMC,y::Vector{Float64},t::Int64,verbose::Bool=true)
     logω = deepcopy(log.(smc.ω))
     for m in 1:smc.M
         likelihood,smc.w[m],_ = particle_filter!(
-            smc.rng,
             smc.x[m],
             smc.w[m],
             y[t],

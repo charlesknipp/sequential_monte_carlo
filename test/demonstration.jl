@@ -50,7 +50,7 @@ x,y  = simulate(lg_mod(lg_θ),T)
 
 
 ## density tempered
-lg_dt_smc = SMC(Random.GLOBAL_RNG,512,1024,lg_mod,lg_prior,3,0.5)
+lg_dt_smc = SMC(512,1024,lg_mod,lg_prior,3,0.5)
 density_tempered(lg_dt_smc,y)
 
 expected_parameters(lg_dt_smc)
@@ -58,7 +58,7 @@ plot_histograms(lg_dt_smc,["A","Q","R"])
 
 
 ## smc²
-lg_smc² = SMC(Random.GLOBAL_RNG,512,1024,lg_mod,lg_prior,3,0.5)
+lg_smc² = SMC(512,1024,lg_mod,lg_prior,3,0.5)
 smc²(lg_smc²,y)
 
 plt = @animate for t in 2:T

@@ -33,7 +33,7 @@ x,y = simulate(mod_func(test_θ),1000)
 
 ## DENSITY TEMPERED ###########################################################
 
-smc_sampler = SMC(Random.GLOBAL_RNG,512,1024,mod_func,test_prior,3,0.5)
+smc_sampler = SMC(512,1024,mod_func,test_prior,3,0.5)
 density_tempered(smc_sampler,y[1:250])
 
 # save histograms after dt estimation
@@ -45,7 +45,6 @@ savefig(jump_start_plot1,"visuals/jump_start_1.svg")
 
 for m in 1:smc_sampler.M
     likelihood,smc_sampler.w[m],_ = particle_filter!(
-        smc_sampler.rng,
         smc_sampler.x[m],
         smc_sampler.w[m],
         y[251],

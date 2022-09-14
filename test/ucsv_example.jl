@@ -17,7 +17,7 @@ T = 1000
 ucsv_sim = ucsv_mod(0.2)
 x,y = simulate(ucsv_sim,T)
 
-ucsv_smc² = SMC(Random.GLOBAL_RNG,512,512,ucsv_mod,ucsv_prior,3,0.5)
+ucsv_smc² = SMC(512,512,ucsv_mod,ucsv_prior,3,0.5)
 smc²(ucsv_smc²,y)
 
 plt = @animate for t in 2:T
