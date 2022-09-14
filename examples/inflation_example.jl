@@ -6,7 +6,8 @@ using Plots
 using FredData
 using StatsBase
 
-ENV["https_proxy"] = "http://wwwproxy.frb.gov:8080"
+#ENV["https_proxy"] = "http://wwwproxy.frb.gov:8080"
+BLAS.set_num_threads(Threads.nthreads())
 
 # get quarterly GDP using the FRED API (ecae2fc8d6c684847525a828ae7a3ab8)
 pce_series = get_data(
@@ -32,25 +33,30 @@ uc_mod(θ) = StateSpaceModel(
 
 uc_prior = product_distribution([
     Normal(3.0,2.0),
-    Uniform(0.0,2.0),
-    Uniform(0.0,2.0)
+    Uniform(0.0,4.0),
+    Uniform(0.0,4.0)
 ])
 
 function get_quantiles_uc(smc::SMC,yt::Float64)
-    xquantiles = zeros(Float64,3)
-    cquantiles = zeros(Float64,3)
-    variance   = 0.0
+    xquantiles = zeros(Float64,smc.M,3)
+    cquantiles = zeros(Float64,smc.M,3)
+    variances  = zeros(Float64,smc.M)
     
     for i in 1:smc.M
-        xquantiles += smc.ω[i]*quantile(smc.x[i],[0.25,0.5,0.75])
-        cquantiles += smc.ω[i]*quantile(yt.-smc.x[i],[0.25,0.5,0.75])
-        variance   += smc.ω[i]*var(smc.x[i])
+        xquantiles[i,:] .= quantile(smc.x[i],weights(smc.w[i]),[0.25,0.5,0.75])
+        cquantiles[i,:] .= quantile(yt.-smc.x[i],weights(smc.w[i]),[0.25,0.5,0.75])
+        variances[i,:]  .= var(smc.x[i],weights(smc.w[i]),)
     end
-    return xquantiles,cquantiles,variance
+
+    return (
+        vec(mean(xquantiles,weights(smc.ω),1)),
+        vec(mean(xquantiles,weights(smc.ω),1)),
+        mean(variances,weights(smc.ω))
+    )
 end
 
 Random.seed!(1998)
-uc_smc² = SMC(Random.GLOBAL_RNG,1024,512,uc_mod,uc_prior,3,0.5)
+uc_smc² = SMC(1024,512,uc_mod,uc_prior,3,0.5)
 
 uc_xqs = fill(zeros(Float64,3),T)
 uc_cqs = fill(zeros(Float64,3),T)
