@@ -20,6 +20,7 @@ abstract type StateSpaceModel end
 # define the macro
 macro model(args...)
     model_definition = splitdef(args[end])
+    #println(MacroTools.prettify(build_model(model_definition)))
     return build_model(model_definition)
 end
 
@@ -42,8 +43,8 @@ function build_model(expr)
     init_ops  = Vector{Expr}()
     trans_ops = Vector{Expr}()
     for var in latent_vars
-        push!(init_ops,get(init_vars,var,nothing))
-        push!(trans_ops,get(trans_vars,var,nothing))
+        push!(init_ops,get(init_vars,var,:(nothing)))
+        push!(trans_ops,get(trans_vars,var,:(nothing)))
     end
 
 
@@ -51,8 +52,9 @@ function build_model(expr)
         struct $(model_name) <: StateSpaceModel end
     end
 
-    @gensym latent_states
+    @gensym latent_state
     unpacked_params = Expr(:tuple,collect(parameters)...)
+    unpacked_states = Expr(:tuple,collect(latent_vars)...)
 
     # define the returns accounting for product_dist construction
     function define_return(ops)
@@ -71,30 +73,35 @@ function build_model(expr)
     # this assumes that each state variable is univariate...not great
     if length(init_ops) == 1
         prealloc_return = :(zeros(Float64,N))
+        XT = Float64
     else
         dim_states = length(init_ops)
-        prealloc_return = :(fill(zeros(SVector{$(dim_states)}),N))
+        prealloc_return = :(fill(zeros(SVector{dim_states}),N))
+        XT = SVector{dim_states,Float64}
     end
 
     # NOTE: there isn't any type inference so keep it abstract
     init_func = esc(quote
-        function initial_dist(model::$(model_name),$(latent_states),θ)
+        function initial_dist(model::$(model_name),$(latent_state)::$(XT),θ)
             $(unpacked_params) = θ
+            $(unpacked_states) = $(latent_state)
             return $(init_return)
         end
     end)
 
     trans_func = esc(quote
-        function transition(model::$(model_name),$(latent_states),θ)
+        function transition(model::$(model_name),$(latent_state)::$(XT),θ)
             $(unpacked_params) = θ
+            $(unpacked_states) = $(latent_state)
             $(clean_expr(final_build))
             return $(trans_return)
         end
     end)
 
     obs_func = esc(quote
-        function observation(model::$(model_name),$(latent_states),θ)
+        function observation(model::$(model_name),$(latent_state)::$(XT),θ)
             $(unpacked_params) = θ
+            $(unpacked_states) = $(latent_state)
             return $(obs_return)
         end
     end)
@@ -234,23 +241,62 @@ function define_transition(expr::Expr)
     end
 
     # TODO: record intermediary variable names
-
     return new_expr,collect(latent_states),trans_vars
 end
 
+## EXAMPLE ####################################################################
+
+# make sure everything is univariate or cleverly infer the type and dimension
 @model function ucsv()
     @init begin
-        x = Normal(x0,exp(0.5*σx0))
+        x  = Normal(x0,exp(0.5*σx0))
         σx = Normal(σx0,γ)
         σy = Normal(σy0,γ)
     end
 
     σx = Normal(@prev(σx),γ)
     σy = Normal(@prev(σy),γ)
-    b  = exp(0.5*@prev(σx))
-    x  = Normal(@prev(x),b)
+    x  = Normal(@prev(x),exp(0.5*@prev(σx)))
 
     @observe y = Normal(x,exp(0.5*σy))
 end
 
-model = ucsv()
+#= running the macro generates the following...
+
+struct ucsv <: StateSpaceModel
+end
+
+function transition(model::ucsv, x, θ)
+    (σx0, γ, x0, σy0) = θ
+    return product_distribution(
+        [Normal(σy, γ), Normal(σx, γ), Normal(x, exp(0.5σx))]
+    )
+end
+
+function observation(model::ucsv, x, θ)
+    (σx0, γ, x0, σy0) = θ
+    return Normal(x, exp(0.5σy))
+end
+
+function initial_dist(model::ucsv, x, θ)
+    (σx0, γ, x0, σy0) = θ
+    return product_distribution(
+        [Normal(σy0, γ), Normal(σx0, γ), Normal(x0, exp(0.5σx0))]
+    )
+end
+
+function preallocate(model::ucsv, N::Int64)
+    return fill(zeros(SVector{3}), N)
+end
+=#
+ucsv_model = ucsv()
+transition(ucsv_model,SVector{3}([0.3,0.4,3.5]),[0.1,0.5,3.0,0.3])
+
+#= NOTES ######################################################################
+
+  - for finding @init I can check the top level Exprs within the function body
+    to determine the block then isolate it. Therefore I can perform the function
+    on both the init process and the transition process
+  - to infer the dimension of states try saving the distribution function via a
+    cross reference to Distributions.jl then declaring a type
+=#
