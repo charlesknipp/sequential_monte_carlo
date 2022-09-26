@@ -19,6 +19,9 @@ mutable struct SMC{SSM,XT,θT,KT}
     model::SSM
     prior::Sampleable
     kernel::KT
+
+    acc_threshold::Float64
+    acc_ratio::Float64
 end
 
 function SMC(
@@ -123,13 +126,43 @@ function rejuvenate!(smc::SMC,y::Vector{Float64},ξ::Float64,verbose::Bool)
         smc.ω[m] = 1.0
     end
 
-    acc_rate = acc_rate/(smc.chain*smc.M)
-    if verbose @printf("\tacc_rate: %1.5f",acc_rate) end
+    smc.acc_ratio = acc_rate/(smc.chain*smc.M)
+    if verbose @printf("\tacc_rate: %1.5f",smc.acc_ratio) end
 
     return smc
 end
 
 rejuvenate!(smc::SMC,y::Vector{Float64},verbose::Bool) = rejuvenate!(smc,y,1.0,verbose)
+
+#=
+    exchange step may not be properly defined...
+=#
+function exchange!(smc::SMC,y::Vector{Float64},verbose::Bool)
+    if smc.acc_ratio < smc.acc_threshold
+        ## recalculate MH kernel move size
+
+        ## double the number of state particles
+        smc.N = (smc.N <= 4096) ? 2*smc.N : smc.N
+        if verbose @printf("\t%d particles added",smc.N) end
+
+        # not sure if I need to reallocate smc.x and smc.w
+        new_logZ = zeros(Float64,smc.M)
+
+        ## generate new set of particles
+        Threads.@threads for m in 1:smc.M
+            smc.x[m],smc.w[m],new_logZ[m] = log_likelihood(
+                smc.N,
+                y,
+                smc.model(smc.θ[m])
+            )
+        end
+
+        ## normalize the weights and calculate the ESS
+        _,smc.ω,smc.ess = normalize(new_logZ.-smc.logZ)
+        smc.logZ = new_logZ
+    end
+end
+
 
 """
     density_tempered(smc,y)
@@ -256,10 +289,14 @@ function smc²!(smc::SMC,y::Vector{Float64},t::Int64,verbose::Bool=true)
         ## resample particles
         resample!(smc)
 
-        ## rejuvenation step
+        ## particle rejuvenation
         rejuvenate!(smc,y[1:(t-1)],verbose)
+
+        ## exchange particles if acceptance ratio is sufficiently low
+        exchange!(smc,y[1:(t-1)],verbose)
     end
 
+    ## propagate state particles
     logω = deepcopy(log.(smc.ω))
     for m in 1:smc.M
         likelihood,smc.w[m],_ = particle_filter!(
