@@ -48,6 +48,7 @@ struct LinearGaussian <: ModelParameters
 
     # initial distribution
     x0::Float64
+    σ0::Float64
 end
 
 function preallocate(model::StateSpaceModel{LinearGaussian},N::Int64)
@@ -75,7 +76,7 @@ function observation(
 end
 
 function initial_dist(model::StateSpaceModel{LinearGaussian})
-    return Normal(model.parameters.x0,model.parameters.Q)
+    return Normal(model.parameters.x0,model.parameters.σ0)
 end
 
 """
@@ -199,10 +200,6 @@ function transition(
     γ  = model.parameters.γ
     x,σx,σy = x
 
-    ## update log volatilities
-    #σx += rand(Normal(0.0,γ))
-    #σy += rand(Normal(0.0,γ))
-
     return TupleProduct((
         Normal(x,exp(0.5*σx)),
         Normal(σx,γ),
@@ -225,10 +222,6 @@ function initial_dist(
     γ  = model.parameters.γ
     x0 = model.parameters.x0
     σx,σy = model.parameters.σ0
-    
-    ## update log volatilities
-    #σx += rand(Normal(0.0,γ))
-    #σy += rand(Normal(0.0,γ))
 
     return TupleProduct((
         Normal(x0,exp(0.5*σx)),
