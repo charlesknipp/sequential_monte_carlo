@@ -29,7 +29,8 @@ function SMC(
         model::SSM,
         prior::Sampleable,
         chain::Int64,
-        ess_threshold::Float64
+        ess_threshold::Float64,
+        min_ar::Float64 = -1.0
     ) where SSM
 
     θ = map(m -> rand(prior),1:M)
@@ -45,15 +46,14 @@ function SMC(
     XT = eltype(x[1])
     θT = eltype(θ)
     
-    # Since Normal is way faster, it is preferred given univariate priors
-    if θT === Float64
-        mh_kernel = Normal
-    else
-        mh_kernel = MvNormal
-    end
+    # needs testing
+    mh_kernel = random_walk_kernel
     KT = typeof(mh_kernel)
 
-    return SMC{SSM,XT,θT,KT}(θ,ω,x,w,ess,ess_min,N,M,chain,logZ,model,prior,mh_kernel)
+    return SMC{SSM,XT,θT,KT}(
+        θ,ω,x,w,ess,ess_min,N,M,chain,logZ,
+        model,prior,mh_kernel,min_ar,0.0
+    )
 end
 
 function expected_parameters(smc::SMC)
@@ -81,24 +81,35 @@ function resample!(smc::SMC)
     smc.logZ = smc.logZ[a]
 end
 
+# define for univariate θ
+function random_walk_kernel(θ::Vector{Float64})
+    dθ = 2.83^2
+    σ  = norm(cov(θ)) < 1.e-8 ? 1.e-2 : dθ*cov(θ) + 1.e-10
+    
+    return (x,scale) -> Normal(x,scale*σ)
+end
+
+# define for multivariate θ (should be typed differently)
+function random_walk_kernel(θ::Vector{Vector{Float64}})
+    θ  = hcat(θ...)
+    dθ = 2.83^2 / size(θ,1)
+    Σ  = norm(cov(θ')) < 1.e-8 ? 1.e-2I : dθ*cov(θ') + 1.e-10I
+
+    return (x,scale) -> MvNormal(x,scale*Σ)
+end
+
 function rejuvenate!(smc::SMC,y::Vector{Float64},ξ::Float64,verbose::Bool)
-    acc_rate = 0.0
+    acc_array = zeros(Int64,smc.M)
 
     # define the PMMH kernel
-    catθ = reduce(hcat,smc.θ)
-    #dθ   = (2.83^2)/length(smc.prior)
-    dθ = 1.0
-
-    # this needs some TLC
-    Σ = norm(cov(catθ')) < 1.e-12 ? 1.e-2*I : dθ*cov(catθ') + 1.e-10I
-    Σ = length(smc.prior) == 1 ? Σ[1] : Σ
+    pmmh_kernel = smc.kernel(smc.θ)
+    scales = 0.5*reverse(1:smc.chain)
     
     if verbose @printf("\t[rejuvenating]") end
 
     Threads.@threads for m in 1:smc.M
-        for _ in 1:smc.chain
-            # currently only supports random walk
-            θ_prop = rand(smc.kernel(smc.θ[m],Σ))
+        for c in 1:smc.chain
+            θ_prop = rand(pmmh_kernel(smc.θ[m],scales[c]))
 
             if insupport(smc.prior,θ_prop)
                 x_prop,w_prop,logZ_prop = log_likelihood(
@@ -119,14 +130,14 @@ function rejuvenate!(smc::SMC,y::Vector{Float64},ξ::Float64,verbose::Bool)
                     smc.x[m]    = x_prop
                     smc.w[m]    = w_prop
 
-                    acc_rate += 1
+                    acc_array[m] = 1
                 end
             end
         end
         smc.ω[m] = 1.0
     end
 
-    smc.acc_ratio = acc_rate/(smc.chain*smc.M)
+    smc.acc_ratio = sum(acc_array)/smc.M
     if verbose @printf("\tacc_rate: %1.5f",smc.acc_ratio) end
 
     return smc
@@ -134,32 +145,44 @@ end
 
 rejuvenate!(smc::SMC,y::Vector{Float64},verbose::Bool) = rejuvenate!(smc,y,1.0,verbose)
 
-#=
-    exchange step may not be properly defined...
-=#
+"""
+    exchange!(smc,y)
+
+The exchange step checks whether the acceptance ratio is sufficiently small in
+which case it will double the number of state particles. This specific scheme
+is taken from (Chopin 2013) and closely follows his Python implementation.
+
+More precisely, if the acceptance ratio is less than some threshold...
+    - double N
+    - run particle filters over a new set of state particles
+    - get the new likelihoods from 1:t
+    - reset the log weights as the difference between likelihoods
+"""
 function exchange!(smc::SMC,y::Vector{Float64},verbose::Bool)
     if smc.acc_ratio < smc.acc_threshold
-        ## recalculate MH kernel move size
-
         ## double the number of state particles
-        smc.N = (smc.N <= 4096) ? 2*smc.N : smc.N
-        if verbose @printf("\t%d particles added",smc.N) end
+        if smc.N <= 4096
+            smc.N *= 2
+            if verbose @printf("\t%d particles added",smc.N) end
 
-        # not sure if I need to reallocate smc.x and smc.w
-        new_logZ = zeros(Float64,smc.M)
+            # not sure if I need to reallocate smc.x and smc.w
+            new_logZ = zeros(Float64,smc.M)
 
-        ## generate new set of particles
-        Threads.@threads for m in 1:smc.M
-            smc.x[m],smc.w[m],new_logZ[m] = log_likelihood(
-                smc.N,
-                y,
-                smc.model(smc.θ[m])
-            )
+            ## generate new set of particles
+            Threads.@threads for m in 1:smc.M
+                smc.x[m],smc.w[m],new_logZ[m] = log_likelihood(
+                    smc.N,
+                    y,
+                    smc.model(smc.θ[m])
+                )
+            end
+
+            ## normalize the weights and calculate the ESS
+            _,smc.ω,smc.ess = normalize(new_logZ.-smc.logZ)
+            smc.logZ = new_logZ
+        else
+            print("\n\t[cannot exceed max state particles]")
         end
-
-        ## normalize the weights and calculate the ESS
-        _,smc.ω,smc.ess = normalize(new_logZ.-smc.logZ)
-        smc.logZ = new_logZ
     end
 end
 
