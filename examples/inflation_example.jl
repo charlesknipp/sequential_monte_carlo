@@ -5,6 +5,7 @@ using Random,Distributions,LinearAlgebra
 using Plots
 using FredData
 using StatsBase
+using Printf
 
 #ENV["https_proxy"] = "http://wwwproxy.frb.gov:8080"
 BLAS.set_num_threads(Threads.nthreads())
@@ -63,10 +64,35 @@ uc_cqs = fill(zeros(Float64,3),T)
 uc_vars = zeros(Float64,T)
 
 smc²(uc_smc²,y)
+debug_list = []
 
 for t in 2:T
     uc_xqs[t-1],uc_cqs[t-1],uc_vars[t-1] = get_quantiles_uc(uc_smc²,y[t-1])
     smc²!(uc_smc²,y,t)
+    if (t > 193) & (uc_smc².acc_ratio < 0.005)
+        smc_copy = deepcopy(uc_smc²)
+        push!(debug_list,smc_copy)
+    end
+end
+
+# debugging over degenerate samples
+for smc in debug_list
+    @printf("ess = %4.3f\t",smc.ess)
+
+    θ = hcat(smc.θ...)
+    ω = smc.ω
+
+    Σ = cov(θ')
+    #print(stdout,"\ncov(θ) = ")
+    #Base.show(stdout,"text/plain",Σ)
+    @printf("norm(cov(θ)) = %3.7f   ",det(Σ))
+
+    Σ = cov(θ,weights(ω),2)
+    #print(stdout,"\nwcov(θ) = ")
+    #Base.show(stdout,"text/plain",Σ)
+    @printf("norm(wcov(θ)) = %3.7f",det(Σ))
+    
+    print("\n")
 end
 
 uc_xqs[T],uc_cqs[T],uc_vars[T] = get_quantiles_uc(uc_smc²,y[T])
