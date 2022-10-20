@@ -69,10 +69,10 @@ debug_list = []
 for t in 2:T
     uc_xqs[t-1],uc_cqs[t-1],uc_vars[t-1] = get_quantiles_uc(uc_smc²,y[t-1])
     smc²!(uc_smc²,y,t)
-    if (t > 193) & (uc_smc².acc_ratio < 0.005)
-        smc_copy = deepcopy(uc_smc²)
-        push!(debug_list,smc_copy)
-    end
+    #if (t > 193) & (uc_smc².acc_ratio < 0.005)
+    #    smc_copy = deepcopy(uc_smc²)
+    #    push!(debug_list,smc_copy)
+    #end
 end
 
 # debugging over degenerate samples
@@ -255,7 +255,7 @@ function get_quantiles_ucsv(smc::SMC,yt::Float64)
 end
 
 Random.seed!(1998)
-ucsv_smc² = SMC(Random.GLOBAL_RNG,8192,512,ucsv_mod,ucsv_prior,5,0.5)
+ucsv_smc² = SMC(8192,512,ucsv_mod,ucsv_prior,5,0.5)
 
 ucsv_xqs = fill(zeros(Float64,3),T)
 ucsv_cqs = fill(zeros(Float64,3),T)
@@ -317,8 +317,8 @@ plot!(
     title = "quarterly PCE inflation rate"
 )
 
-savefig(ucsv_plt1,"pce_inflation_trend_1960-2020_ucsv.pdf")
-savefig(ucsv_plt2,"pce_inflation_cycle_1960-2020_ucsv.pdf")
+savefig(ucsv_plt1,"visuals/pce_inflation_trend_1960-2020_ucsv.svg")
+savefig(ucsv_plt2,"visuals/pce_inflation_cycle_1960-2020_ucsv.svg")
 
 
 ## Run Bootstrap Filter #######################################################

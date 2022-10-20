@@ -51,6 +51,10 @@ struct LinearGaussian <: ModelParameters
     σ0::Float64
 end
 
+function LinearGaussian(;A,B,Q,R,x0=0.0,σ0=1.0)
+    return LinearGaussian(A,B,Q,R,x0,σ0)
+end
+
 function preallocate(model::StateSpaceModel{LinearGaussian},N::Int64)
     return zeros(Float64,N)
 end
@@ -92,6 +96,10 @@ struct StochasticVolatility <: ModelParameters
 
     # volatility
     σ::Float64
+end
+
+function StochasticVolatility(;μ,ρ,σ)
+    return StochasticVolatility(μ,ρ,σ)
 end
 
 function preallocate(model::StateSpaceModel{StochasticVolatility},N::Int64)
@@ -197,7 +205,7 @@ function transition(
         model::StateSpaceModel{UCSV},
         x::SVector{3,Float64}
     )
-    γ  = model.parameters.γ
+    γ = model.parameters.γ
     x,σx,σy = x
 
     return TupleProduct((
