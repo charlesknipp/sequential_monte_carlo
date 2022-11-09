@@ -1,5 +1,5 @@
-export StateSpaceModel,LinearGaussian,StochasticVolatility,UC,UCSV
-export simulate,transition,observation,initial_dist
+export StateSpaceModel,LinearGaussian,StochasticVolatility,StochasticVolatilityLeverage,UC,UCSV
+export simulate,transition,observation,initial_dist,preallocate
 
 abstract type ModelParameters end
 
@@ -130,6 +130,72 @@ function initial_dist(model::StateSpaceModel{StochasticVolatility})
     σ = model.parameters.σ
 
     return Normal(μ,σ/sqrt(1.0-ρ^2))
+end
+
+"""
+stochastic volatility with leverage
+
+x[t] = μ+ρ*(μ-x[t-1])+σ*u[t]
+y[t] = exp(0.5*x[t])*v[t]
+
+cor(u[t],v[t]) = ϕ
+"""
+struct StochasticVolatilityLeverage <: ModelParameters
+    # unconditional mean and speed
+    μ::Float64
+    ρ::Float64
+
+    # volatility
+    σ::Float64
+
+    # leverage
+    ϕ::Float64
+end
+
+function StochasticVolatilityLeverage(;μ,ρ,σ,ϕ)
+    return StochasticVolatilityLeverage(μ,ρ,σ,ϕ)
+end
+
+function preallocate(model::StateSpaceModel{StochasticVolatilityLeverage},N::Int64)
+    return fill(zeros(SVector{2}),N)
+end
+
+function transition(
+        model::StateSpaceModel{StochasticVolatilityLeverage},
+        x::SVector{2,Float64}
+    )
+    μ = model.parameters.μ
+    ρ = model.parameters.ρ
+    σ = model.parameters.σ
+
+    return TupleProduct((
+        Dirac(μ+ρ*(x[2]-μ)),
+        Normal(μ+ρ*(x[2]-μ),σ)
+    ))
+end
+
+function observation(
+        model::StateSpaceModel{StochasticVolatilityLeverage},
+        x::SVector{2,Float64}
+    )
+    ϕ = model.parameters.ϕ
+    σ = model.parameters.σ
+
+    u  = (x[2]-x[1]) / σ
+    σx = exp(0.5*x[2])
+    
+    return Normal(u*ϕ*σx,σx*(1-ϕ^2))
+end
+
+function initial_dist(model::StateSpaceModel{StochasticVolatilityLeverage})
+    μ = model.parameters.μ
+    ρ = model.parameters.ρ
+    σ = model.parameters.σ
+
+    return return TupleProduct((
+        Dirac(μ),
+        Normal(μ,σ/sqrt(1.0-ρ^2))
+    ))
 end
 
 """
