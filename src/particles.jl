@@ -14,9 +14,8 @@ function normalize(logw::Vector{Float64})
     return (logμ,w,ess)
 end
 
-function resample(w::Vector{Float64})
-    N = length(w)
-    return sample(1:N,Weights(w),N)
+function resample(w::Vector{Float64},N::Int64=length(w))
+    return sample(1:length(w),Weights(w),N)
 end
 
 #resample(w::Vector{Float64}) = resample(Random.GLOBAL_RNG,w)
