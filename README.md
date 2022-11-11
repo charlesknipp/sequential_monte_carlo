@@ -1,112 +1,104 @@
-## Density Tempered Particle Filter
+# SequentialMonteCarlo.jl
 
-Based on the algorithm presented in [(Duan & Fulop, 2013)](https://www.tandfonline.com/doi/pdf/10.1080/07350015.2014.940081), the density tempered particle filter estimates the joint posterior of latent states and model parameters by way of a tempering scheme.
+SequentialMonteCarlo.jl presents a set of particle filters and Sequential Monte Carlo algorithms for both latent state and model parameter inference.
 
-Consider a state space model with latent states `x[t]` and observations `y[t]`; let vector `θ` parameterize the transition density `f(x[t]|θ)` and the observation density `g(x[t]|θ)`. For parameter estimation, let `prior` represent the prior of `θ` with a tempering scheme defined by a sequence of `ξ`s. For the filters themselves, let `M` represent the number of `θ` particles and `N` be the number of state particles.
+## State Space Models
 
+To begin using this module, we must first properly establish the construction of state space models (SSMs) under my framework. Typical model construction requires a small set of constructors for: (1) an initial distribution, (2) a transition density, and (3) an observation density.
 
-### Algorithm
-
-Accompanying this algorithm are a selection of helper functions necessary to understanding the particle filter. The first is a simple calculation of the effective sample size (ESS) specifically using the weighting scheme from [(Duan & Fulop, 2013)](https://www.tandfonline.com/doi/pdf/10.1080/07350015.2014.940081).
+To construct a univariate linear Gaussian SSM, we can define the following constructor, where `θ::Vector{Float64}` represents a vector of parameters.
 
 ```julia
-function ess(Δξ,Z)
-    s = [Z[i]^(Δξ) for i in 1:M]
-    return sum(s)^2 / sum([s[i]^2 for i in 1:M])
+lg_mod(θ) = StateSpaceModel(
+    LinearGaussian(θ[1],1.0,θ[2],θ[3],0.0),
+    (1,1)
+)
+```
+
+Calling `lg_mod(⋅)` constructs a `StateSpaceModel` object, which can be called to simulate data, or to be used in a particle filter. As long as the model in question has the required methods defined. For demonstration define `lg_example` and simulate 100 periods.
+
+```julia
+lg_example = lg_mod([0.5,0.9,0.8])
+_,y = simulate(lg_example,100)
+```
+
+This construction weighs heavily on multiple dispatch, which is a nice feature of Julia but also requires more work from the user. As such, a better method is in the works.
+
+### Particle Filters
+
+Particle filters are primarily used for online inference for latent states, which is ideally defined as a mutating operation given a set of particles `x` and weights `w`.
+
+Suppose we observe a vector `y` simulated from model `lg_example`. To construct a bootstrap filter with 1024 particles and capture summary statistics at each time period we do the following:
+
+```julia
+# preallocate quantile vector and log likelihood
+xq = fill(zeros(Float64,3),length(y))
+logZ = 0.0
+
+# initialize bootstrap filter at time t=1
+x,w,logμ = bootstrap_filter(1024,y[1],lg_example)
+
+xq[1] = quantile(x,[0.25,0.5,0.75])
+logZ += logμ
+
+# subsequent iterations of the bootstrap filter
+for t in 2:eachindex(y)
+    # run filter and print ess
+    logμ,w,ess = bootstrap_filter!(x,w,y[t],lg_example)
+    @printf("t = %4d\tess = %4.3f",t,ess)
+
+    # update summary statistics
+    xq[t] = quantile(x,[0.25,0.5,0.75])
+    logZ += logμ
 end
 ```
 
-Subsequently, we must define a sequential Monte Carlo method to calculate the marginal densities `Z`, as noted in the algorithm. Specifically, we employ a bootstrap filter for its simplicity and effectiveness.
+It should be noted that `x` and `w` are both operated in-place and thus update with each call of `bootstrap_filter!()`. Furthermore, to avoid such long winded code, one can instead call the function `log_likelihood()` to run a particle filter over all periods of a model and return the log likelihood (or `logZ` as its referred to above).
 
 ```julia
-function bootstrap_filter(N,y,θ)
-    xt = rand(μ(θ),N)
-    
-    for t in 1:T
-        # propagate
-        for i in 1:N
-            xt[i] = rand(f(xt[i],θ))
-            w[i]  = pdf(g(xt[i],θ),y[t])
-        end
-
-        # normalize weights
-        Z[t] = mean(w)
-        w   /= sum(w)
-
-        # resample
-        a  = wsample(1:N,w,N)
-        xt = xt[a]
-    end
-
-    return reduce(*,Z)
-end
+# for a bootstrap filter leave the proposal argument empty
+logZ = log_likelihood(1024,y,lg_example)
 ```
 
-Given the prerequisite functions, we have sufficient background to define the main algorithm. Following is a simplified, albeit honest, pseudocode of the filter. For brevity sake, certain details are omitted; however the following description is an accurate representation of [(Duan & Fulop, 2013)](https://www.tandfonline.com/doi/pdf/10.1080/07350015.2014.940081)s intended proces.
+The construction of these particle filters is not perfect on its own, since it is meant specifically to perform joint estimation. However, they are fully functional and meant to be flexible enough when called in high volumes. Something that `LowLevelParticleFilters.jl` actually fails to do (more on this in issue...).
+
+## Joint Inference
+
+Suppose a given state space model has an uncertain construction such that the model parameters are unobserved. Now the problem becomes twofold: what can we infer about the latent states as well as the parameters?
+
+To solve this problem, I introduce two main algorithms: [SMC²](https://arxiv.org/pdf/1101.1528.pdf) and [density tempered SMC](https://www.tandfonline.com/doi/pdf/10.1080/07350015.2014.940081).
+
+Running these algorithms requires a prior for the parameter space as well as a model constructor as we defined above with `lg_mod()`. Below we define `lg_prior` such that `length(lg_prior) == length(θ)` where `θ` is the input to the function `lg_mod`.
 
 ```julia
-# (2.2.1) initialize the particle set
-for i in 1:M
-    θ[i] = rand(prior)
-    Z[i] = bootstrap_filter(N,y,θ[i])
-    S[i] = 1/M
-end
+# model constructor
+lg_mod(θ) = StateSpaceModel(
+    LinearGaussian(θ[1],1.0,θ[2],θ[3],0.0),
+    (1,1)
+)
 
-# begin the tempering sequence at 0
-ξ = 0.0
-
-while ξ < 1
-    # (2.2.2) find optimal ξ and reweight
-    Δξ = optimize(Δξ -> ess(Δξ,Z)-(M/2))
-    ξ += Δξ
-
-    S  = [Z[i]^(Δξ) for i in 1:M]
-    S /= sum(S)
-
-    if ess(Δξ) < M/2
-        # (2.2.3) resample particles
-        a = wsample(1:M,S,M)
-        θ = θ[a]
-        Z = Z[a]
-
-        # (2.2.4) moving the particles
-        Σ = cov(θ')
-
-        for _ in 1:mcmc_steps
-            for i in 1:M
-                prop_θ = rand(MvNormal(θ[i],Σ))
-                prop_Z = bootstrap_filter(N,y,prop_θ)
-
-                α  = (prop_Z^ξ)*pdf(prior,prop_θ)
-                α /= (Z[i]^ξ)*pdf(prior,θ[i])
-
-                if rand() ≤ minimum([1.0,α])
-                    θ[i] = prop_θ
-                    Z[i] = prop_Z
-                end
-            end
-        end
-    end
-end
+# prior definition
+lg_prior = product_distribution([
+    TruncatedNormal(0,1,-1,1),
+    LogNormal(),
+    LogNormal()
+])
 ```
 
-It should be noted that the MCMC kernel is a random walk from the currently observed particle `θ[i]` with a given covariance `Σ` determined after each new choice of `ξ`. As such, the jump kernel has a symmetric distribution in which `h(θ[i]|prop_θ)` is actually equal to its counterpart `h(prop_θ|θ[i])`, thus eliminating it from the acceptance ratio `α`.
-
-An additional point of interest are the particle weights `S`. In (Duan & Fulop, 2013)](https://www.tandfonline.com/doi/pdf/10.1080/07350015.2014.940081) weights are carried over from the previous iteration as follows:
+Upon declaration of the prior and model constructor, we define a generic SMC sampler with 513 parameter particles, 1024 state particles, and ESS threshold of 0.5, and 3 MCMC steps. To demonstrate, we can run density tempered SMC like so...
 
 ```julia
-S  = [S[i]*(Z[i]^Δξ) for i in 1:M]
-S /= sum(S)
+lg_dt_smc = SMC(512,1024,lg_mod,lg_prior,3,0.5)
+density_tempered(lg_dt_smc,y)
 ```
 
-And reset to `1/M` following each resmapling step. It is clear to see this is redundant since resampling occurs at every step; maximal selection of `ξ` is performed via a root finding algorithm, and thus will always result in an ESS which requires resampling. The resulting particles are equally weighted and make no difference in the calculation of the new weights.
+For an online algorithm like SMC², we treat it similarly to the particle filter by using mutating functions to change properties of `lg_smc²` as time progresses.
 
-## SMC²
+```julia
+lg_smc² = SMC(512,1024,lg_mod,lg_prior,3,0.5)
+smc²(lg_smc²,y)
 
-Based on the algorithm presented in [Chopin, 2012](https://arxiv.org/pdf/1101.1528.pdf), SMC² performs online estimation of the joint posterior for latent states and model paramters; the process parallels methods akin to particle Markov Chain Monte Carlo (PMCMC) and iterated batch importance sampling (IBIS).
-
-Consider a state space model with latent states `x[t]` and observations `y[t]`; let vector `θ` parameterize the transition density `f(x[t]|θ)` and the observation density `g(x[t]|θ)`. For parameter estimation, let `prior` represent the prior of `θ`. For the filters themselves, let `M` represent the number of `θ` particles and `N` be the number of state particles.
-
-### Algorithm
-
-...
+for t in 2:T
+    smc²!(lg_smc²,y,t)
+end
+```
