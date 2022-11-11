@@ -1,6 +1,4 @@
-include(joinpath(pwd(),"src/sequential_monte_carlo.jl"))
-
-using .SequentialMonteCarlo
+using SequentialMonteCarlo
 using Random,Distributions,LinearAlgebra
 using Plots
 using FredData
