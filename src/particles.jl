@@ -35,10 +35,7 @@ function particle_filter(
     # initialize states and reweight
     x    = preallocate(model,N)
     logw = zeros(Float64,N)
-    
-    ## depracated in favor of preallocation
-    # x    = rand(rng,initial_dist(model),N)
-    # logw = logpdf.(observation.(Ref(model),x),y)
+
     for i in 1:N
         x[i]    = rand(initial_dist(model))
         logw[i] = logpdf(observation(model,x[i]),y)
@@ -73,7 +70,7 @@ function particle_filter!(
 
     ## propagate
     for i in 1:length(states)
-        x[i]     = rand(transition(model,xp[i]))
+        x[i]     = rand(proposal(model,xp[i]))
         logw[i]  = logpdf(observation(model,x[i]),y)
 
         if !isnothing(proposal)
@@ -92,33 +89,57 @@ function bootstrap_filter(
         y::Float64,
         model::StateSpaceModel
     )
-    ## set proposal to nothing
-    return particle_filter(N,y,model,nothing)
+    # initialize states and reweight
+    x    = preallocate(model,N)
+    logw = zeros(Float64,N)
+
+    for i in 1:N
+        x[i]    = rand(initial_dist(model))
+        logw[i] = logpdf(observation(model,x[i]),y)
+    end
+
+    # normalize initial weights
+    logμ,w,_ = normalize(logw)
+
+    return x,w,logμ
 end
 
 function bootstrap_filter!(
-        states::Vector{Float64},
+        states::Vector{XT},
         weights::Vector{Float64},
         y::Float64,
         model::StateSpaceModel
-    )
-    ## set proposal to nothing
-    return particle_filter!(states,weights,y,model,nothing)
+    ) where XT
+    ## local vector for log weights
+    logw = similar(weights)
+
+    ## resample
+    a  = resample(weights)
+    x  = states
+    xp = deepcopy(x[a])
+
+    ## propagate
+    for i in 1:length(states)
+        x[i]     = rand(transition(model,xp[i]))
+        logw[i]  = logpdf(observation(model,x[i]),y)
+    end
+
+    ## reweight
+    return normalize(logw)
 end
 
 # there is a better way to write this... no excuses
 function log_likelihood(
         N::Int64,
         y::Vector{Float64},
-        model::StateSpaceModel,
-        proposal=nothing
+        model::StateSpaceModel
     )
+    
     logZ = 0.0
-
-    x,w,logZ = particle_filter(N,y[1],model,proposal)
+    x,w,logZ = bootstrap_filter(N,y[1],model)
 
     for t in 2:length(y)
-        logμ,w,_ = particle_filter!(x,w,y[t],model,proposal)
+        logμ,w,_ = bootstrap_filter!(x,w,y[t],model)
         logZ    += logμ
     end
 

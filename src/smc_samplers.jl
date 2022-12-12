@@ -27,9 +27,9 @@ end
 function SMC(
         N::Int64,M::Int64,
         model::SSM,
-        prior::Sampleable,
-        chain::Int64,
-        ess_threshold::Float64,
+        prior::Sampleable;
+        chain::Int64 = 3,
+        ess_threshold::Float64 = 0.5,
         min_ar::Float64 = -1.0
     ) where SSM
 
@@ -285,11 +285,10 @@ Initialization of Chopin's SMC² at time `t = 1`.
 """
 function smc²(smc::SMC,y::Vector{Float64})
     for m in 1:smc.M
-        smc.x[m],smc.w[m],smc.ω[m] = particle_filter(
+        smc.x[m],smc.w[m],smc.ω[m] = bootstrap_filter(
             smc.N,
             y[1],
-            smc.model(smc.θ[m]),
-            nothing
+            smc.model(smc.θ[m])
         )
     end
 
@@ -322,12 +321,11 @@ function smc²!(smc::SMC,y::Vector{Float64},t::Int64,verbose::Bool=true)
     ## propagate state particles
     logω = deepcopy(log.(smc.ω))
     for m in 1:smc.M
-        likelihood,smc.w[m],_ = particle_filter!(
+        likelihood,smc.w[m],_ = bootstrap_filter!(
             smc.x[m],
             smc.w[m],
             y[t],
-            smc.model(smc.θ[m]),
-            nothing
+            smc.model(smc.θ[m])
         )
 
         logω[m]     += likelihood
