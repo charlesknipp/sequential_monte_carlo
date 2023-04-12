@@ -1,6 +1,8 @@
 export SMC,expected_parameters,density_tempered,smc²,smc²!
 
-mutable struct SMC{SSM,XT,θT,KT}
+abstract type Sampler end
+
+mutable struct SMC{SSM,XT,θT,KT} <: Sampler
     θ::Vector{θT}
     ω::Vector{Float64}
 
@@ -27,9 +29,9 @@ end
 function SMC(
         N::Int64,M::Int64,
         model::SSM,
-        prior::Sampleable;
-        chain::Int64 = 3,
-        ess_threshold::Float64 = 0.5,
+        prior::Sampleable,
+        chain::Int64,
+        ess_threshold::Float64,
         min_ar::Float64 = -1.0
     ) where SSM
 
@@ -57,7 +59,7 @@ function SMC(
 end
 
 function expected_parameters(smc::SMC)
-    _,ω,_ = normalize(smc.ω)
+    _,ω,_ = reweight(smc.ω)
     weighted_sample = reduce(hcat,smc.θ.*ω)
     return sum(weighted_sample,dims=2)
 end
@@ -178,7 +180,7 @@ function exchange!(smc::SMC,y::Vector{Float64},verbose::Bool)
             end
 
             ## normalize the weights and calculate the ESS
-            _,smc.ω,smc.ess = normalize(new_logZ.-smc.logZ)
+            _,smc.ω,smc.ess = reweight(new_logZ.-smc.logZ)
             smc.logZ = new_logZ
         else
             print("\n\t[cannot exceed max state particles]")
@@ -227,7 +229,7 @@ function density_tempered(smc::SMC,y::Vector{Float64},verbose=true)
     end
 
     ## normalize the weights and calculate the ESS
-    _,smc.ω,smc.ess = normalize(smc.logZ)
+    _,smc.ω,smc.ess = reweight(smc.logZ)
 
     ξ = 0.0
     while ξ < 1.0
@@ -244,7 +246,7 @@ function density_tempered(smc::SMC,y::Vector{Float64},verbose=true)
             newξ = (upper_bound+lower_bound)/2.0
             logω = (newξ-oldξ)*smc.logZ
 
-            _,smc.ω,smc.ess = normalize(logω)
+            _,smc.ω,smc.ess = reweight(logω)
 
             if smc.ess == smc.ess_min
                 break
@@ -260,7 +262,7 @@ function density_tempered(smc::SMC,y::Vector{Float64},verbose=true)
             resample_flag = false
             newξ = 1.0
             logω = (newξ-oldξ)*smc.logZ
-            _,smc.ω,smc.ess = normalize(logω)
+            _,smc.ω,smc.ess = reweight(logω)
         end
 
         ξ = newξ
@@ -293,7 +295,7 @@ function smc²(smc::SMC,y::Vector{Float64})
     end
 
     smc.logZ = smc.ω
-    _,smc.ω,smc.ess = normalize(smc.ω)
+    _,smc.ω,smc.ess = reweight(smc.ω)
 
     return smc
 end
@@ -321,7 +323,7 @@ function smc²!(smc::SMC,y::Vector{Float64},t::Int64,verbose::Bool=true)
     ## propagate state particles
     logω = deepcopy(log.(smc.ω))
     for m in 1:smc.M
-        likelihood,smc.w[m],_ = bootstrap_filter!(
+        likelihood,smc.w[m] = bootstrap_filter!(
             smc.x[m],
             smc.w[m],
             y[t],
@@ -333,6 +335,6 @@ function smc²!(smc::SMC,y::Vector{Float64},t::Int64,verbose::Bool=true)
     end
 
     ## normalize parameter weights and calculate ESS
-    _,smc.ω,smc.ess = normalize(logω)
+    _,smc.ω,smc.ess = reweight(logω)
     if verbose print("\n") end
 end
