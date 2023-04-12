@@ -1,5 +1,4 @@
 export TupleProduct
-using PDMats
 
 # extend base operations for Distributions with static arrays
 @inline Base.:(-)(x::StaticArray,::Distributions.Zeros) = x
